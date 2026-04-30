@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze *)",
+      "Bash(flutter pub *)",
+      "Bash(flutter build *)",
+      "PowerShell(Test-Path *)",
+      "PowerShell(Get-Item \"E:\\\\Projects\\\\conveyorgame\\\\assets\\\\boxes\\\\red.png\" | Select-Object Name, Length, LastWriteTime; Write-Output \"---\"; $bytes = [System.IO.File]::ReadAllBytes\\(\"E:\\\\Projects\\\\conveyorgame\\\\assets\\\\boxes\\\\red.png\"\\)[0..7] | ForEach-Object { $_.ToString\\(\"X2\"\\) }; \"First 8 bytes: $\\($bytes -join ' '\\)\"; Write-Output \"---Expected PNG signature: 89 50 4E 47 0D 0A 1A 0A\")",
+      "PowerShell($f = Get-Item \"E:\\\\Projects\\\\conveyorgame\\\\assets\\\\boxes\\\\red.png\"; \"Name=$\\($f.Name\\) Length=$\\($f.Length\\)\"; $b = [System.IO.File]::ReadAllBytes\\($f.FullName\\); $head = \\($b[0..7] | ForEach-Object { $_.ToString\\(\"X2\"\\) }\\) -join \" \"; \"Header: $head\"; \"Expected PNG: 89 50 4E 47 0D 0A 1A 0A\")",
+      "Bash(/e/SDKs/flutter/bin/flutter analyze *)",
+      "Bash(/e/SDKs/flutter/bin/flutter devices *)",
+      "Bash(/e/SDKs/flutter/bin/flutter build *)",
+      "Bash(/e/SDKs/flutter/bin/flutter run *)",
+      "PowerShell(Stop-Process *)"
+    ]
+  }
+}
