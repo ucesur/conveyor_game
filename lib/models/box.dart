@@ -38,6 +38,7 @@ class ThrowAnim {
   double endX;
   double endY;
   final int targetConvId;
+  final int targetSlot;
   final double flightDuration;
   final double squashDuration;
   final double settleDuration;
@@ -49,6 +50,7 @@ class ThrowAnim {
     required this.endX,
     required this.endY,
     required this.targetConvId,
+    required this.targetSlot,
     this.flightDuration = 220,
     this.squashDuration = 80,
     this.settleDuration = 100,

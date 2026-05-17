@@ -15,6 +15,7 @@ class GameAssets {
   final Map<String, ui.Image> _boxes = {};
   final Map<String, ui.Image> _gates = {};
   final Map<String, ui.Image> _conveyors = {};
+  ui.Image? _background;
   bool _loaded = false;
 
   /// Reserved for future warm-up steps (font registration etc.) so callers
@@ -25,6 +26,7 @@ class GameAssets {
   /// `assets/conveyors/{id}.png` for ids in [BoxColor.all]. Idempotent.
   Future<void> load() async {
     if (_loaded) return;
+    _background = await _tryLoad('assets/background/background.png');
     for (final color in BoxColor.all) {
       final box = await _tryLoad('assets/boxes/${color.id}.png');
       if (box != null) _boxes[color.id] = box;
@@ -48,6 +50,7 @@ class GameAssets {
     }
   }
 
+  ui.Image? get backgroundImage => _background;
   ui.Image? boxImage(BoxColor color) => _boxes[color.id];
   ui.Image? gateImage(BoxColor color) => _gates[color.id];
   ui.Image? conveyorImage(BoxColor color) => _conveyors[color.id];

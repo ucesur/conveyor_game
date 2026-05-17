@@ -1,64 +1,88 @@
 # Conveyor Match — Flutter
 
-A Flutter port of the React/TypeScript "Conveyor Match" game. Drag colored boxes between neighboring conveyor belts so each box reaches the gate matching its color.
+A Flutter puzzle game where you drag and fling colored boxes between neighboring conveyor belts so each box reaches the gate matching its color.
 
 ## Gameplay
 
-- Boxes spawn on conveyor belts and slide toward a colored gate at the end.
+- Boxes spawn on conveyor belts and slide toward a colored gate at the far end.
 - Match the **box color** to the **gate color** to score a point.
-- You can drag a box to the **immediately adjacent** conveyor only (one lane hop).
-- Wrong color through a gate costs a life. You have 3 lives.
-- Belts occasionally enter **MAINTENANCE** (reversing direction) and **RESIZE** (changing length) to keep things chaotic.
-- Each level has more belts, more colors, and faster speeds.
+- You can drag or swipe/fling a box to the **immediately adjacent** conveyor only (one lane hop).
+- Wrong color through a gate costs a life. You start with 4 lives.
+- Score combos by sending consecutive boxes of the same color through their gate.
+- Belts occasionally enter **MAINTENANCE** (direction reversal, drops rejected) and **RESIZE** (height animates) to keep things chaotic.
+- Each level adds more belts, more colors, and faster speeds. Up to 5 belts, up to 5 colors.
 
 ## Running the project
 
-This package contains only the Dart/Flutter source. To run it, create a Flutter project shell and drop these files in:
-
 ```bash
-# 1. Create a new Flutter app
-flutter create conveyor_match_app
-cd conveyor_match_app
-
-# 2. Replace the default sources with the files from this archive:
-#    - lib/           → lib/
-#    - pubspec.yaml   → pubspec.yaml
-#    - analysis_options.yaml → analysis_options.yaml
-
-# 3. Fetch dependencies and run
 flutter pub get
-flutter run
+flutter run                        # connected device
+flutter run -d chrome              # web
+flutter run -d windows             # desktop
+flutter build apk                  # Android release
+flutter build web                  # web release
 ```
 
-The game renders onto a fixed 360×600 virtual canvas and scales to fit any device viewport, matching the aspect ratio of the original web game.
+The game locks to portrait orientation and renders onto a fixed 360 × (screen-aspect) virtual canvas, letterboxed via `AspectRatio` + `ClipRRect`.
 
 ## Project layout
 
 ```
 lib/
-├── main.dart                    # App entry
+├── main.dart                    # App entry — forces portrait, dark theme
 ├── models/
-│   ├── box.dart                 # A sliding/draggable box
-│   ├── box_color.dart           # Color palette (red/blue/green/yellow/purple)
-│   ├── conveyor.dart            # A single conveyor belt
-│   ├── popup.dart               # Floating "+1" / "✗" popups
+│   ├── box.dart                 # Sliding/draggable box + throw animation state
+│   ├── box_color.dart           # 5-color palette (bg / dark / light variants)
+│   ├── conveyor.dart            # Belt state (direction, height, maintenance, resize)
+│   ├── falling_box.dart         # Short-lived box that falls into the gate on score
+│   ├── particle.dart            # Dust particle spawned on box landing
+│   ├── popup.dart               # Floating "+1" / "✗" / "⚠" popups
 │   └── transition.dart          # Level-up splash state
 ├── game/
-│   └── game_controller.dart     # Game state + update loop + input handling
+│   └── game_controller.dart     # All game state + frame update loop + input handling
 ├── widgets/
-│   └── game_painter.dart        # CustomPainter that draws the whole scene
+│   └── game_painter.dart        # Pure CustomPainter — reads controller, never writes
 └── screens/
-    └── game_screen.dart         # Root screen: Ticker + gesture listener + overlays
+    └── game_screen.dart         # Ticker owner, pointer-event bridge, overlays
 ```
 
-## Architecture notes
+## Architecture
 
-- **Game loop**: driven by a `Ticker` in `GameScreen`, which calls `GameController.update(now)` every frame. The controller is a `ChangeNotifier`, and a `CustomPaint` rebound to it repaints on every notification.
-- **Input**: the canvas is scaled with `FittedBox`-like logic, so pointer coordinates are converted back into the 360×600 game space before being handed to the controller.
-- **Rendering**: one `CustomPainter` draws background, HUD, conveyors, boxes, popups, and the level transition. Menu and game-over overlays are regular Flutter widgets stacked on top.
+**Data flow:** `Ticker` → `GameController.update(ms)` → `notifyListeners()` → `AnimatedBuilder` → `GamePainter.paint()`
 
-## Differences from the React version
+`GameController` is the single source of truth — a `ChangeNotifier` that owns all game state. `GamePainter` is a pure read-only `CustomPainter`; it never writes back to the controller.
 
-- Uses `Canvas` drawing instead of SVG — visually equivalent, with a hand-rolled diagonal-stripe pattern for the maintenance overlay and a radial-gradient glow for the level splash.
-- Drag animation uses canvas transforms rather than SVG `transform` attributes.
-- State is held in a plain `ChangeNotifier` rather than React `useState`/refs.
+Pointer events land in widget pixels; `GameScreen` converts them to the 360-wide game coordinate space before passing to the controller.
+
+### Game loop (frame capped at 50 ms dt)
+
+1. Expire popups older than 800 ms.
+2. Stochastic checks trigger maintenance (direction reversal) and resize on random idle belts.
+3. End any completed maintenance / resize animations.
+4. Advance throw animations; commit boxes to target belt on landing (spawns dust particles).
+5. Advance falling-box and particle effects.
+6. `_spawnBoxes` — places a new box just off the entry end of each belt that has a free entry slot.
+7. `_moveBoxes` — advances non-dragged boxes; boxes reaching the gate are scored or penalise a life.
+8. `_checkLevelUp` — level threshold is `Σ(6 + i×4)` for i in 1..level-1.
+
+### Drag / fling rules
+
+- **Drag-and-drop**: release over a belt to land the box in the nearest free slot.
+- **Swipe/fling**: a fast horizontal flick at release auto-targets the adjacent belt in the swipe direction (averaged over the last 3 trail points to handle natural deceleration).
+- Drop target must be the source belt or its immediate visual neighbor — no skipping lanes.
+- MAINTENANCE belts reject all drops; box snaps back to source.
+- If the closest slot is occupied, search outward up to `nSlots` candidates before giving up.
+
+### Conveyor states
+
+A belt can be `maintenance` (reversed, striped overlay, drops rejected) or `resizing` (height animating via cubic ease-in-out). Always call `getCurrentHeight(conv, now)` — never read `conv.height` directly during a resize.
+
+### Scoring
+
+- Correct gate: `+1` base; consecutive same-color hits multiply up to `×4` (combo).
+- Wrong gate: `−1 life`, screen shake, combo resets.
+- Game over at 0 lives; high score tracked in memory for the session.
+
+### Rendering
+
+`shouldRepaint` returns `true` unconditionally (repaints gated by `ChangeNotifier`). Pure `Canvas` calls — no image assets or external fonts. Diagonal-stripe maintenance overlay, radial-gradient gate glow, cubic easing on resize, and dust-particle burst on box landing are all procedural.

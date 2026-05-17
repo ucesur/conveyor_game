@@ -42,16 +42,32 @@ class GamePainter extends CustomPainter {
   }
 
   // ---- Background ----
+  static Paint? _bgPaint;
+  static double _bgCachedWidth = 0;
+  static double _bgCachedHeight = 0;
+
   void _drawBackground(Canvas canvas) {
-    final rect = Rect.fromLTWH(0, 0, GameController.gameWidth,
-        GameController.gameHeight);
-    final paint = Paint()
-      ..shader = const LinearGradient(
-        begin: Alignment.topCenter,
-        end: Alignment.bottomCenter,
-        colors: [Color(0xFF1E293B), Color(0xFF334155)],
-      ).createShader(rect);
-    canvas.drawRect(rect, paint);
+    final w = GameController.gameWidth;
+    final h = GameController.gameHeight;
+    final dst = Rect.fromLTWH(0, 0, w, h);
+    final bgImg = GameAssets.instance.backgroundImage;
+    if (bgImg != null) {
+      final src = Rect.fromLTWH(
+          0, 0, bgImg.width.toDouble(), bgImg.height.toDouble());
+      canvas.drawImageRect(bgImg, src, dst, Paint()..filterQuality = FilterQuality.medium);
+      return;
+    }
+    if (_bgPaint == null || _bgCachedWidth != w || _bgCachedHeight != h) {
+      _bgCachedWidth = w;
+      _bgCachedHeight = h;
+      _bgPaint = Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF1E293B), Color(0xFF334155)],
+        ).createShader(dst);
+    }
+    canvas.drawRect(dst, _bgPaint!);
   }
 
   // ---- Top HUD: score / level / lives / progress bar ----
@@ -152,28 +168,51 @@ class GamePainter extends CustomPainter {
         allowedTargets != null && !allowedTargets.contains(conv.id);
     final highlightPulse = 0.5 + 0.5 * sin(now * 0.008);
 
-    // Allowed-target dashed glow
+    // 3D perspective: top (far) narrows, bottom (close) is full width
+    final perspDepth = 12.0;
+    final topRailW = 1.0;
+    final botRailW = 5.5;
+    final tlX = conv.x + perspDepth;
+    final trX = conv.x + conv.width - perspDepth;
+    final blX = conv.x;
+    final brX = conv.x + conv.width;
+    final topY = conv.y;
+    final botY = conv.y + h;
+    final bodyPath = Path()
+      ..moveTo(tlX, topY)
+      ..lineTo(trX, topY)
+      ..lineTo(brX, botY)
+      ..lineTo(blX, botY)
+      ..close();
+
+    // Allowed-target dashed glow (trapezoidal outline)
     if (isAllowedTarget && !conv.maintenance) {
-      _drawDashedRRect(
-        canvas,
-        RRect.fromRectAndRadius(
-            Rect.fromLTWH(conv.x - 6, conv.y - 6, conv.width + 12, h + 12),
-            const Radius.circular(6)),
-        const Color(0xFF22C55E),
-        2,
-        0.4 + highlightPulse * 0.5,
+      const pad = 6.0;
+      canvas.drawPath(
+        Path()
+          ..moveTo(tlX - pad, topY - pad)
+          ..lineTo(trX + pad, topY - pad)
+          ..lineTo(brX + pad, botY + pad)
+          ..lineTo(blX - pad, botY + pad)
+          ..close(),
+        Paint()
+          ..color = const Color(0xFF22C55E).withValues(alpha: 0.4 + highlightPulse * 0.5)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
       );
     }
 
     // Forbidden target tint
     if (isForbiddenTarget) {
-      final paint = Paint()
-        ..color = const Color(0xFFEF4444).withValues(alpha: 0.08);
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromLTWH(conv.x - 2, conv.y - 2, conv.width + 4, h + 4),
-            const Radius.circular(5)),
-        paint,
+      const pad = 2.0;
+      canvas.drawPath(
+        Path()
+          ..moveTo(tlX - pad, topY - pad)
+          ..lineTo(trX + pad, topY - pad)
+          ..lineTo(brX + pad, botY + pad)
+          ..lineTo(blX - pad, botY + pad)
+          ..close(),
+        Paint()..color = const Color(0xFFEF4444).withValues(alpha: 0.08),
       );
     }
 
@@ -192,19 +231,16 @@ class GamePainter extends CustomPainter {
     }
 
     // Belt body
-    final bodyRRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(conv.x, conv.y, conv.width, h),
-        const Radius.circular(4));
     final convImg = GameAssets.instance.conveyorImage(conv.color);
     if (convImg == null) {
-      canvas.drawRRect(bodyRRect, Paint()..color = const Color(0xFF475569));
+      canvas.drawPath(bodyPath, Paint()..color = const Color(0xFF475569));
     }
 
     // Scrolling belt surface — clip to belt body. Sprite tiles vertically
     // with the same scroll offset as boxes; procedural fallback paints the
     // 24px-period stripes.
     canvas.save();
-    canvas.clipRRect(bodyRRect);
+    canvas.clipPath(bodyPath);
     if (convImg != null) {
       final tileH = conv.width * (convImg.height / convImg.width);
       final scroll = conv.maintenance ? 0.0 : (offset % tileH);
@@ -234,7 +270,7 @@ class GamePainter extends CustomPainter {
       final fillPaint = Paint()
         ..color =
             const Color(0xFF06B6D4).withValues(alpha: 0.15 + rFlash * 0.25);
-      canvas.drawRRect(bodyRRect, fillPaint);
+      canvas.drawPath(bodyPath, fillPaint);
       final arrowOpacity = 0.7 + rFlash * 0.3;
       _drawText(
         canvas,
@@ -319,7 +355,7 @@ class GamePainter extends CustomPainter {
       final pulse = 0.65 + 0.35 * sin(now * 0.006);
 
       canvas.save();
-      canvas.clipRRect(bodyRRect);
+      canvas.clipPath(bodyPath);
       canvas.drawRRect(
         RRect.fromRectAndRadius(
             Rect.fromLTWH(ghostX, ghostY, ghostSize, ghostSize),
@@ -349,15 +385,25 @@ class GamePainter extends CustomPainter {
       leftRailColor = const Color(0xFF06B6D4).withValues(alpha: 0.6 + rFlash * 0.4);
       rightRailColor = leftRailColor;
     }
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromLTWH(conv.x, conv.y, 3, h), const Radius.circular(1)),
-        Paint()..color = leftRailColor);
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(
-            Rect.fromLTWH(conv.x + conv.width - 3, conv.y, 3, h),
-            const Radius.circular(1)),
-        Paint()..color = rightRailColor);
+    // Tapered rails: thin at top (far), thick at bottom (close)
+    canvas.drawPath(
+      Path()
+        ..moveTo(tlX, topY)
+        ..lineTo(tlX + topRailW, topY)
+        ..lineTo(blX + botRailW, botY)
+        ..lineTo(blX, botY)
+        ..close(),
+      Paint()..color = leftRailColor,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(trX - topRailW, topY)
+        ..lineTo(trX, topY)
+        ..lineTo(brX, botY)
+        ..lineTo(brX - botRailW, botY)
+        ..close(),
+      Paint()..color = rightRailColor,
+    );
 
     // Drive-roller end caps
     final endCapFill = Paint()..color = const Color(0xFF1E293B);
@@ -391,7 +437,7 @@ class GamePainter extends CustomPainter {
     // Debug: slot boundaries scrolling with the belt surface
     if (game.debugSlots) {
       canvas.save();
-      canvas.clipRRect(bodyRRect);
+      canvas.clipPath(bodyPath);
       final scroll = conv.maintenance ? 0.0 : (offset % GameController.boxSize);
       final nVisible = (h / GameController.boxSize).ceil() + 2;
       final slotBorder = Paint()
@@ -415,7 +461,7 @@ class GamePainter extends CustomPainter {
     // the layered procedural draw. Direction arrow is rendered on top of
     // both so the indicator stays legible regardless of art style.
     final gateRect =
-        Rect.fromLTWH(conv.x - 3, gateY, conv.width + 6, 40);
+        Rect.fromLTWH(conv.x - 3, gateY, conv.width + 6, 60);
     final gateImg = GameAssets.instance.gateImage(conv.color);
     final gateOpacity = conv.maintenance ? 0.5 : 1.0;
     if (gateImg != null) {
@@ -466,25 +512,18 @@ class GamePainter extends CustomPainter {
     canvas.restore();
   }
 
-  // ---- Dashed rounded-rect stroke (for allowed-target highlight) ----
+  // ---- Solid rounded-rect stroke (for allowed-target highlight) ----
+  // Previously dashed via computeMetrics(), which was expensive every frame.
+  // A solid pulsing outline is visually equivalent and O(1) to paint.
   void _drawDashedRRect(
       Canvas canvas, RRect rrect, Color color, double strokeWidth, double opacity) {
-    final paint = Paint()
-      ..color = color.withValues(alpha: opacity)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth;
-    final path = Path()..addRRect(rrect);
-    final metrics = path.computeMetrics();
-    const dashLen = 4.0;
-    const gapLen = 3.0;
-    for (final metric in metrics) {
-      double distance = 0;
-      while (distance < metric.length) {
-        final next = min(distance + dashLen, metric.length);
-        canvas.drawPath(metric.extractPath(distance, next), paint);
-        distance = next + gapLen;
-      }
-    }
+    canvas.drawRRect(
+      rrect,
+      Paint()
+        ..color = color.withValues(alpha: opacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth,
+    );
   }
 
   // ---- Motion trail of the dragged box ----
@@ -636,6 +675,41 @@ class GamePainter extends CustomPainter {
       _drawProceduralBox(canvas, box, opacity);
     }
     canvas.restore();
+
+    if (game.debugSlots) {
+      final anim = box.throwAnim;
+      final String label;
+      if (anim != null && !box.onConveyor) {
+        label = '→${anim.targetSlot}';
+      } else if (box.slotIndex == null) {
+        label = 'E';
+      } else if (conv != null) {
+        // Show live rawSlot (physical belt position) so out-of-range values
+        // like 8, 9... are visible rather than collapsed into the opaque "X".
+        final phase = game.beltOffset(conv.speed, conv.direction) %
+            GameController.boxSize;
+        final raw =
+            ((box.y - conv.y - phase) / GameController.boxSize).floor();
+        label = '$raw';
+      } else {
+        label = '${box.slotIndex}';
+      }
+      final tp = TextPainter(
+        text: TextSpan(
+          text: label,
+          style: const TextStyle(
+            color: Color(0xFFFFFF00),
+            fontSize: 11,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(
+        canvas,
+        Offset(box.x + (box.size - tp.width) / 2, box.y + (box.size - tp.height) / 2),
+      );
+    }
   }
 
   void _drawProceduralBox(Canvas canvas, Box box, double opacity) {

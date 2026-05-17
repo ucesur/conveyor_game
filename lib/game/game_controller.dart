@@ -16,8 +16,8 @@ enum GameState { menu, playing, paused, gameover }
 class GameController extends ChangeNotifier {
   // ---- Constants ----
   static const double maintenanceDuration = 2200;
-  static const double reverseCheckInterval = 5000;
-  static const double reverseChance = 0.4;
+  static const double reverseCheckInterval = 12000;
+  static const double reverseChance = 0.25;
 
   static const double resizeCheckInterval = 6500;
   static const double resizeChance = 0.35;
@@ -99,6 +99,10 @@ class GameController extends ChangeNotifier {
   // duration — keeps "age since event" continuous across the pause.
   double _pauseStart = 0;
 
+  // Per-belt earliest time the next box may spawn. Randomised after each spawn
+  // so belts fill at different rates. Shifted on pause/resume like other timers.
+  final Map<int, double> _nextSpawnTime = {};
+
   final Random _random = Random();
 
   // ---- Easing ----
@@ -117,19 +121,9 @@ class GameController extends ChangeNotifier {
   // How many box-sized slots fit on a belt of height [convH].
   static int _numSlots(double convH) => max(1, (convH / boxSize).floor());
 
-  // Y coordinate of the top-left corner of slot [s] on [conv].
-  // Slots are always top-anchored (conv.y + s*boxSize) for both directions so
-  // that resize animations — which change convH but not conv.y — don't shift
-  // existing slots and cause boxes to drift the wrong way.
-  //
-  // Direction semantics:
-  //   down → slot 0 = top (entry), slot N-1 = bottom (exit toward gate)
-  //   up   → slot 0 = top (exit toward gate), slot N-1 = bottom (entry)
-  //
-  // convH is accepted but unused — kept so call sites that already pass it
-  // don't need to be updated.
-  // ignore: avoid_unused_parameters
-  double _slotY(Conveyor conv, int s, double convH) => conv.y + s * boxSize;
+  // Unscrolled top of slot [s]: used as a fixed approach target for entering
+  // boxes so the gap to the belt doesn't drift with the belt phase.
+  double _slotY(Conveyor conv, int s) => conv.y + s * boxSize;
 
   // Scrolled slot position — matches the visual belt surface scroll so ghosts,
   // debug markers, and landed boxes all use the same coordinate.
@@ -145,36 +139,27 @@ class GameController extends ChangeNotifier {
     return ((y - conv.y - phase) / boxSize).floor();
   }
 
-  // Logical occupancy check — used by _moveBoxes for belt advancement.
-  // A box owns exactly the slot it is heading toward (slotIndex), so queued
-  // boxes can start moving the instant the slot ahead is logically vacated,
-  // giving continuous belt flow with no artificial stall.
+  // Single occupancy check used by spawn, belt movement, and drop/throw validation.
+  // A slot is considered occupied when any box's authoritative slotIndex matches,
+  // an in-flight box has reserved it via targetSlot, or an entering box is
+  // waiting at the entry slot. Using slotIndex (not a position-derived value)
+  // keeps spawn, movement, and drop logic consistent with one source of truth.
   bool _isSlotFree(Conveyor conv, int s, int excludeId) {
     final isDown = conv.direction == ConveyorDirection.down;
     final convH = getCurrentHeight(conv, _lastFrameTime);
-    final entrySlot = isDown ? 0 : _numSlots(convH) - 1;
+    final nSlots = _numSlots(convH);
+    final entrySlot = isDown ? 0 : nSlots - 1;
     return !boxes.any((b) {
       if (b.id == excludeId) return false;
+      final anim = b.throwAnim;
+      if (anim != null && !b.onConveyor && anim.targetConvId == conv.id) {
+        return anim.targetSlot == s;
+      }
       if (b.conveyorId != conv.id) return false;
       if (!b.onConveyor) return false;
       if (b.slotIndex == null) return s == entrySlot;
       if (b.slotIndex == _exitSlot) return false;
       return b.slotIndex == s;
-    });
-  }
-
-  // Physical occupancy check — used only when validating a throw or snap-back
-  // target. Slot [s] is considered occupied whenever any on-belt box's bounding
-  // rect [b.y, b.y+50] overlaps the slot's rect [slotTop, slotTop+50].
-  // This is exact: a box that has fully left a slot (b.y >= slotTop+50) no
-  // longer blocks it, so the earliest possible landing for the thrown box is
-  // flush-touching (0 px gap) — never overlapping.
-  bool _isSlotFreeStrict(Conveyor conv, int s, int excludeId) {
-    return !boxes.any((b) {
-      if (b.id == excludeId) return false;
-      if (b.conveyorId != conv.id) return false;
-      if (!b.onConveyor) return false;
-      return _rawSlot(conv, b.y) == s;
     });
   }
 
@@ -279,6 +264,12 @@ class GameController extends ChangeNotifier {
     final now = _lastFrameTime;
     _lastReverseCheck = now + 3000;
     _lastResizeCheck = now + 4500;
+    // Stagger initial spawns so belts don't all fill at the same moment.
+    _nextSpawnTime.clear();
+    for (int i = 0; i < newConveyors.length; i++) {
+      _nextSpawnTime[newConveyors[i].id] =
+          now + 500 + i * 800 + _random.nextDouble() * 600;
+    }
   }
 
   void startGame() {
@@ -333,6 +324,9 @@ class GameController extends ChangeNotifier {
     _lastResizeCheck += delta;
     _lastFrameTime += delta;
     if (_shakeUntil > 0) _shakeUntil += delta;
+    for (final key in _nextSpawnTime.keys.toList()) {
+      _nextSpawnTime[key] = _nextSpawnTime[key]! + delta;
+    }
     for (final conv in conveyors) {
       if (conv.maintenance) conv.maintenanceEnd += delta;
       if (conv.resizing) conv.resizeStart += delta;
@@ -420,14 +414,9 @@ class GameController extends ChangeNotifier {
     _lastReverseCheck = now;
     if (conveyors.length <= 1 || _random.nextDouble() >= reverseChance) return;
 
-    // Only reverse belts that have no box currently on/approaching them,
-    // which avoids sending an in-flight box through the wrong gate.
-    final candidates = conveyors.where((c) {
-      if (c.maintenance || c.resizing) return false;
-      final hasBox = boxes.any(
-          (b) => b.conveyorId == c.id && (b.onConveyor || b.entering));
-      return !hasBox;
-    }).toList();
+    final candidates = conveyors
+        .where((c) => !c.maintenance && !c.resizing)
+        .toList();
 
     if (candidates.isEmpty) return;
 
@@ -438,6 +427,8 @@ class GameController extends ChangeNotifier {
         : ConveyorDirection.down;
     target.maintenance = true;
     target.maintenanceEnd = now + maintenanceDuration;
+
+    boxes.removeWhere((b) => b.conveyorId == target.id && b.id != draggedBoxId);
 
     _addPopup(target.x + target.width / 2, target.y + 10, '⚠',
         const Color(0xFFFBBF24),
@@ -501,12 +492,25 @@ class GameController extends ChangeNotifier {
     }
   }
 
+  // Base spawn interval at level 1 (ms). Decreases with level, bottoms out
+  // at _spawnIntervalMin. Each belt gets ±30 % random jitter per spawn.
+  static const double _spawnIntervalBase = 3500;
+  static const double _spawnIntervalMin = 1200;
+
+  double _spawnInterval() {
+    final base = max(
+        _spawnIntervalMin, _spawnIntervalBase - (level - 1) * 200.0);
+    return base * (0.7 + _random.nextDouble() * 0.6);
+  }
+
   void _spawnBoxes(double now) {
     if (conveyors.isEmpty) return;
     const bsize = GameController.boxSize;
 
     for (final conv in conveyors) {
       if (conv.maintenance) continue;
+      if (now < (_nextSpawnTime[conv.id] ?? 0)) continue;
+
       final isDown = conv.direction == ConveyorDirection.down;
       final convH = getCurrentHeight(conv, now);
       final entrySlot = isDown ? 0 : _numSlots(convH) - 1;
@@ -523,6 +527,7 @@ class GameController extends ChangeNotifier {
         onConveyor: true,
         entering: true,
       ));
+      _nextSpawnTime[conv.id] = now + _spawnInterval();
     }
   }
 
@@ -563,9 +568,11 @@ class GameController extends ChangeNotifier {
       // Entry slot: slot 0 for direction=down (top), slot N-1 for direction=up (bottom).
       final entrySlot = isDown ? 0 : nSlots - 1;
 
-      // Entering phase: box outside belt, moving toward the entry slot.
+      // Entering phase: box outside belt, moving toward the fixed belt top.
+      // Uses _slotY (unscrolled) so the approach target doesn't drift with the
+      // belt phase — prevents boxes getting stranded when phase wraps.
       if (box.slotIndex == null) {
-        final targetY = _slotY(conv, entrySlot, convH);
+        final targetY = _slotY(conv, entrySlot);
         final dist = (box.y - targetY).abs();
         if (dist <= moveAmount + 0.5) {
           if (_isSlotFree(conv, entrySlot, box.id)) {
@@ -789,7 +796,8 @@ class GameController extends ChangeNotifier {
     box.vx = vx;
     box.vy = vy;
     box.trail = trail;
-    notifyListeners();
+    // No notifyListeners here — the ticker fires notifyListeners each vsync,
+    // so calling it again per pointer event just queues redundant repaints.
   }
 
   void handleEnd() {
@@ -834,9 +842,9 @@ class GameController extends ChangeNotifier {
             }).firstOrNull;
       if (targetConv != null && !targetConv.maintenance) {
         final targetH = getCurrentHeight(targetConv, now);
-        final landingY = _findFreeSlot(box, targetConv, targetH);
-        if (landingY != null) {
-          _startThrow(box, targetConv, landingY, now);
+        final slot = _findFreeSlotIndex(box, targetConv, targetH);
+        if (slot != null) {
+          _startThrow(box, targetConv, slot, now);
           draggedBoxId = null;
           notifyListeners();
           return;
@@ -893,11 +901,11 @@ class GameController extends ChangeNotifier {
 
     if (targetConv != null) {
       final currentH = getCurrentHeight(targetConv, now);
-      final landingY = _findFreeSlot(box, targetConv, currentH);
-      if (landingY == null) {
+      final slot = _findFreeSlotIndex(box, targetConv, currentH);
+      if (slot == null) {
         _snapBackToSource(box, now);
       } else {
-        _startThrow(box, targetConv, landingY, now);
+        _startThrow(box, targetConv, slot, now);
       }
     } else {
       // Released outside any conveyor → animate back to source
@@ -924,9 +932,8 @@ class GameController extends ChangeNotifier {
     final h = getCurrentHeight(sourceConv, now);
     final nSlots = _numSlots(h);
     final entrySlot = sourceConv.direction == ConveyorDirection.down ? 0 : nSlots - 1;
-    final landingY =
-        _findFreeSlot(box, sourceConv, h) ?? _slotYScrolled(sourceConv, entrySlot, h);
-    _startThrow(box, sourceConv, landingY, now);
+    final slot = _findFreeSlotIndex(box, sourceConv, h) ?? entrySlot;
+    _startThrow(box, sourceConv, slot, now);
   }
 
   Box? _findBox(int id) {
@@ -936,10 +943,9 @@ class GameController extends ChangeNotifier {
     return null;
   }
 
-  /// Looks for a vacant Y position on [targetConv] near the box's current y.
-  /// Returns null if 20 nudges against the belt's travel direction don't find
-  /// a slot. Mirrors the same policy as the drop path in [handleEnd].
-  double? _findFreeSlot(Box box, Conveyor targetConv, double currentH) {
+  /// Returns the index of the nearest free slot on [targetConv] to [box],
+  /// or null if every slot is occupied. Pure controller logic — no pixel math.
+  int? _findFreeSlotIndex(Box box, Conveyor targetConv, double currentH) {
     final nSlots = _numSlots(currentH);
     final closestSlot =
         _closestSlotIndex(targetConv, box.y, currentH, nSlots);
@@ -948,26 +954,25 @@ class GameController extends ChangeNotifier {
           radius == 0 ? [closestSlot] : [closestSlot - radius, closestSlot + radius];
       for (final s in candidates) {
         if (s < 0 || s >= nSlots) continue;
-        if (_isSlotFreeStrict(targetConv, s, box.id)) {
-          return _slotYScrolled(targetConv, s, currentH);
-        }
+        if (_isSlotFree(targetConv, s, box.id)) return s;
       }
     }
     return null;
   }
 
-  /// Primes [box] for a throw to [landingY] on [targetConv]. The actual
-  /// per-frame interpolation runs in [_updateThrows]; clearing drag fields
-  /// here keeps the painter from rendering pickup state during flight.
-  void _startThrow(
-      Box box, Conveyor targetConv, double landingY, double now) {
+  /// Primes [box] for a throw to [slot] on [targetConv].
+  /// The slot index is the authoritative controller decision; pixel endpoints
+  /// are derived here for the visual arc and stay separate from game logic.
+  void _startThrow(Box box, Conveyor targetConv, int slot, double now) {
+    final convH = getCurrentHeight(targetConv, now);
     box.throwAnim = ThrowAnim(
       startTime: now,
       startX: box.x,
       startY: box.y,
       endX: targetConv.x + (targetConv.width - box.size) / 2,
-      endY: landingY,
+      endY: _slotYScrolled(targetConv, slot, convH),
       targetConvId: targetConv.id,
+      targetSlot: slot,
     );
     box.onConveyor = false;
     box.sourceConveyorId = null;
@@ -997,7 +1002,6 @@ class GameController extends ChangeNotifier {
       // subsequent frames during squash/settle just hold position.
       if (!box.onConveyor || box.conveyorId != anim.targetConvId) {
         box.x = anim.endX;
-        box.y = anim.endY;
         box.onConveyor = true;
         box.conveyorId = anim.targetConvId;
         box.entering = false;
@@ -1005,8 +1009,17 @@ class GameController extends ChangeNotifier {
         if (tConv != null) {
           final convH = getCurrentHeight(tConv, now);
           final ns = _numSlots(convH);
+          // Snap to the reserved slot's current scrolled position so the box
+          // lands in sync with the belt regardless of phase drift during flight.
+          if (anim.targetSlot != _exitSlot && anim.targetSlot < ns) {
+            box.y = _slotYScrolled(tConv, anim.targetSlot, convH);
+          } else {
+            box.y = anim.endY;
+          }
           final rs = _rawSlot(tConv, box.y);
           box.slotIndex = (rs < 0 || rs >= ns) ? _exitSlot : rs.clamp(0, ns - 1);
+        } else {
+          box.y = anim.endY;
         }
         _spawnDust(box.x + box.size / 2, box.y + box.size, box.color);
       }
@@ -1146,8 +1159,8 @@ class GameController extends ChangeNotifier {
       if (!targets.contains(conv.id)) continue;
       if (conv.maintenance) continue;
       final h = getCurrentHeight(conv, _lastFrameTime);
-      final slot = _findFreeSlot(b, conv, h);
-      if (slot != null) result[conv.id] = slot;
+      final slot = _findFreeSlotIndex(b, conv, h);
+      if (slot != null) result[conv.id] = _slotYScrolled(conv, slot, h);
     }
     return result;
   }
