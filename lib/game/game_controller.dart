@@ -30,17 +30,11 @@ class GameController extends ChangeNotifier {
 
   // Derived from gameHeight so belts fill the screen proportionally.
   static double get conveyorMaxHeight => gameHeight - 350;
-  static double get conveyorMinHeight => conveyorMaxHeight * 0.45;
+  static double get conveyorMinHeight => max(
+      GameConfig.conveyorMinSlots * boxSize, conveyorMaxHeight * 0.45);
   static double get conveyorDefaultHeight => conveyorMaxHeight * 0.8;
 
-  // Position the belt so there is 50px above it for box spawn entry and
-  // gateHeight below it for the gate; centers the whole block vertically.
-  static double get conveyorTop {
-    final available = gameHeight - hudBottom;
-    final needed = conveyorMaxHeight + gateHeight + 50;
-    final padding = max(0.0, (available - needed) / 2);
-    return hudBottom + padding + 50;
-  }
+  static double get conveyorTop => gameHeight * GameConfig.conveyorTopFraction;
 
   // Game-area coordinate space — call setGameSize() from the layout builder
   // before the user starts a game so setupLevel() gets the right dimensions.

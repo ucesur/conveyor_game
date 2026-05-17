@@ -18,6 +18,10 @@ class GameConfig {
   static const double conveyorWidth = 52.0;
   static const double conveyorGap = 14.0;
   static const int conveyorMaxCount = 5;
+  // Top edge of conveyors as a fraction of total game height.
+  static const double conveyorTopFraction = 0.32;
+  // Minimum number of box-sized slots every conveyor must have.
+  static const int conveyorMinSlots = 4;
 
   // ── Gate ─────────────────────────────────────────────────────────────────
   // gateHeight  — used by GameController to compute the gateY anchor position.
