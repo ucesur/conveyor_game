@@ -6,6 +6,7 @@ import '../models/conveyor.dart';
 import '../models/falling_box.dart';
 import '../models/particle.dart';
 import '../models/popup.dart';
+import 'game_config.dart';
 
 enum GameState { menu, playing, paused, gameover }
 
@@ -23,15 +24,12 @@ class GameController extends ChangeNotifier {
   static const double resizeChance = 0.35;
   static const double resizeAnimationDuration = 900;
 
-  // HUD (score/level/lives + progress bar) occupies y=0..64.
-  static const double hudBottom = 64;
-  // Colored gate block at each end of a belt is 40px tall.
-  static const double gateHeight = 40;
-  // Gap between belt bottom and gate top so they read as separate elements.
-  static const double gateOffset = 1.0;
+  static const double hudBottom = GameConfig.hudBottom;
+  static const double gateHeight = GameConfig.gateHeight;
+  static const double gateOffset = GameConfig.gateOffset;
 
   // Derived from gameHeight so belts fill the screen proportionally.
-  static double get conveyorMaxHeight => gameHeight - 200;
+  static double get conveyorMaxHeight => gameHeight - 350;
   static double get conveyorMinHeight => conveyorMaxHeight * 0.45;
   static double get conveyorDefaultHeight => conveyorMaxHeight * 0.8;
 
@@ -46,14 +44,14 @@ class GameController extends ChangeNotifier {
 
   // Game-area coordinate space — call setGameSize() from the layout builder
   // before the user starts a game so setupLevel() gets the right dimensions.
-  static double gameWidth = 360;
-  static double gameHeight = 600;
+  static double gameWidth = GameConfig.baseWidth;
+  static double gameHeight = GameConfig.baseHeight;
 
   /// Called once the device screen size is known (from LayoutBuilder).
   /// Keeps [gameWidth] at 360 and scales [gameHeight] to match the screen ratio.
   static void setGameSize(double screenW, double screenH) {
-    gameWidth = 360;
-    gameHeight = screenH * 360 / screenW;
+    gameWidth = GameConfig.baseWidth;
+    gameHeight = screenH * GameConfig.baseWidth / screenW;
   }
 
   // ---- State ----
@@ -114,9 +112,7 @@ class GameController extends ChangeNotifier {
   // Sentinel slotIndex value meaning "past last slot, moving freely to gate".
   static const int _exitSlot = 9999;
 
-  // Side length of every box and slot pitch — one constant governs both so
-  // changing it scales box count per belt automatically.
-  static const double boxSize = 40.0;
+  static const double boxSize = GameConfig.boxSize;
 
   // How many box-sized slots fit on a belt of height [convH].
   static int _numSlots(double convH) => max(1, (convH / boxSize).floor());
@@ -206,12 +202,10 @@ class GameController extends ChangeNotifier {
   // ---- Setup ----
   // X position of slot [i] in the fixed max-5 layout.
   static double _beltSlotX(int i) {
-    const conveyorWidth = 52.0;
-    const gap = 14.0;
-    const maxCount = 5;
-    const totalWidth = maxCount * conveyorWidth + (maxCount - 1) * gap;
+    const totalWidth = GameConfig.conveyorMaxCount * GameConfig.conveyorWidth +
+        (GameConfig.conveyorMaxCount - 1) * GameConfig.conveyorGap;
     final startX = (gameWidth - totalWidth) / 2;
-    return startX + i * (conveyorWidth + gap);
+    return startX + i * (GameConfig.conveyorWidth + GameConfig.conveyorGap);
   }
 
   // Order in which slots are filled. Starts at slot 1 so the first 2 belts
@@ -220,13 +214,12 @@ class GameController extends ChangeNotifier {
 
   // Two belts are visually adjacent when their left edges are one slot apart.
   bool _areAdjacentBelts(Conveyor a, Conveyor b) =>
-      (a.x - b.x).abs() < 52.0 + 14.0 + 1;
+      (a.x - b.x).abs() < GameConfig.conveyorWidth + GameConfig.conveyorGap + 1;
 
   void setupLevel(int lvl) {
     final numConveyors = min(2 + ((lvl - 1) ~/ 2), 5);
     final activeColors = _shuffledColors.sublist(0, numConveyors);
 
-    const conveyorWidth = 52.0;
     final baseSpeed = 0.28 + lvl * 0.035;
     final List<Conveyor> newConveyors = [];
     for (int i = 0; i < activeColors.length; i++) {
@@ -250,7 +243,7 @@ class GameController extends ChangeNotifier {
         color: color,
         x: _beltSlotX(_slotFillOrder[i]),
         y: conveyorTop,
-        width: conveyorWidth,
+        width: GameConfig.conveyorWidth,
         height: height,
         speed: baseSpeed * speedMultiplier,
         direction: direction,
@@ -389,6 +382,7 @@ class GameController extends ChangeNotifier {
 
     if (debugPaused) {
       _updateThrows(now);
+      _resolveOverlaps(boxes, now);
       _updateParticles(now, dt);
       _updateFallingBoxes(dt);
       notifyListeners();
@@ -492,15 +486,14 @@ class GameController extends ChangeNotifier {
     }
   }
 
-  // Base spawn interval at level 1 (ms). Decreases with level, bottoms out
-  // at _spawnIntervalMin. Each belt gets ±30 % random jitter per spawn.
-  static const double _spawnIntervalBase = 3500;
-  static const double _spawnIntervalMin = 1200;
-
   double _spawnInterval() {
-    final base = max(
-        _spawnIntervalMin, _spawnIntervalBase - (level - 1) * 200.0);
-    return base * (0.7 + _random.nextDouble() * 0.6);
+    final base = max(GameConfig.spawnIntervalMin,
+        GameConfig.spawnIntervalBase - (level - 1) * 200.0);
+    final jitter = GameConfig.spawnIntervalJitterMin +
+        _random.nextDouble() *
+            (GameConfig.spawnIntervalJitterMax -
+                GameConfig.spawnIntervalJitterMin);
+    return base * jitter;
   }
 
   void _spawnBoxes(double now) {
@@ -602,12 +595,28 @@ class GameController extends ChangeNotifier {
       keep.add(box);
     }
 
-    // Collision safety: boxes move at the same speed so they stay separated
-    // under normal conditions, but a freshly thrown box may land too close.
-    // Process exit-first so the leading box takes priority.
+    _resolveOverlaps(keep, now);
+
+    boxes = keep;
+
+    if (wrongHits > 0) {
+     // lives -= wrongHits;
+      _shakeUntil = _lastFrameTime + 280;
+      if (lives <= 0) {
+        lives = 0;
+        gameState = GameState.gameover;
+        if (score > highScore) highScore = score;
+      }
+    }
+  }
+
+  // Pushes overlapping boxes apart and recalculates slotIndex from their Y position.
+  // Called both from _moveBoxes and the debugPaused path so throws that land
+  // while paused don't leave two boxes sharing the same slot index.
+  void _resolveOverlaps(List<Box> boxList, double now) {
     for (final conv in conveyors) {
       final isDown = conv.direction == ConveyorDirection.down;
-      final beltBoxes = keep
+      final beltBoxes = boxList
           .where((b) =>
               b.conveyorId == conv.id &&
               b.onConveyor &&
@@ -629,18 +638,6 @@ class GameController extends ChangeNotifier {
         final ns = _numSlots(getCurrentHeight(conv, now));
         curr.slotIndex =
             (rs >= ns || rs < 0) ? _exitSlot : rs.clamp(0, ns - 1);
-      }
-    }
-
-    boxes = keep;
-
-    if (wrongHits > 0) {
-      lives -= wrongHits;
-      _shakeUntil = _lastFrameTime + 280;
-      if (lives <= 0) {
-        lives = 0;
-        gameState = GameState.gameover;
-        if (score > highScore) highScore = score;
       }
     }
   }
@@ -729,7 +726,7 @@ class GameController extends ChangeNotifier {
       color: newColor,
       x: _beltSlotX(_slotFillOrder[oldCount]),
       y: conveyorTop,
-      width: 52.0,
+      width: GameConfig.conveyorWidth,
       height: conveyorDefaultHeight,
       speed: baseSpeed * speedMultiplier,
       direction: direction,

@@ -1,6 +1,7 @@
 ﻿import 'dart:math';
 import 'dart:ui' as ui show Image;
 import 'package:flutter/material.dart';
+import '../game/game_config.dart';
 import '../game/game_controller.dart';
 import '../models/box.dart';
 import '../models/conveyor.dart';
@@ -32,11 +33,13 @@ class GamePainter extends CustomPainter {
     for (final conv in game.conveyors) {
       _drawConveyor(canvas, conv, now);
     }
+
     _drawTrail(canvas);
     for (final box in game.boxes) {
       _drawBox(canvas, box);
     }
     _drawParticles(canvas, now);
+    _drawGeneratorBacks(canvas, now);
     _drawFallingBoxes(canvas);
     _drawPopups(canvas, now);
   }
@@ -144,6 +147,21 @@ class GamePainter extends CustomPainter {
     canvas.drawImageRect(image, src, dst, paint);
   }
 
+  // ---- Generator backs (z-level 2 — drawn after all conveyor belts) ----
+  void _drawGeneratorBacks(Canvas canvas, double now) {
+    final genBackImg = GameAssets.instance.generatorBackImage;
+    if (genBackImg == null) return;
+    for (final conv in game.conveyors) {
+      if (conv.direction != ConveyorDirection.up) continue;
+      final h = game.getCurrentHeight(conv, now);
+      final genW = conv.width + GameConfig.generatorBackExtraW;
+      final genH = genW * (genBackImg.height / genBackImg.width);
+      _drawSprite(canvas, genBackImg,
+          Rect.fromLTWH(conv.x + GameConfig.generatorBackOffsetX,
+              conv.y + h + GameConfig.generatorBackOffsetY, genW, genH));
+    }
+  }
+
   // ---- Conveyor belt ----
   void _drawConveyor(Canvas canvas, Conveyor conv, double now) {
     final h = game.getCurrentHeight(conv, now);
@@ -169,9 +187,9 @@ class GamePainter extends CustomPainter {
     final highlightPulse = 0.5 + 0.5 * sin(now * 0.008);
 
     // 3D perspective: top (far) narrows, bottom (close) is full width
-    final perspDepth = 12.0;
-    final topRailW = 1.0;
-    final botRailW = 5.5;
+    final perspDepth = GameConfig.perspDepth;
+    final topRailW = GameConfig.railWidthTop;
+    final botRailW = GameConfig.railWidthBottom;
     final tlX = conv.x + perspDepth;
     final trX = conv.x + conv.width - perspDepth;
     final blX = conv.x;
@@ -216,18 +234,27 @@ class GamePainter extends CustomPainter {
       );
     }
 
-    // Spawn direction indicator above/below the belt
-    if (!conv.maintenance) {
-      _drawText(
-        canvas,
-        conv.direction == ConveyorDirection.down ? '↓' : '↑',
-        conv.x + conv.width / 2,
-        spawnLabelY,
-        color: const Color(0xFF64748B),
-        fontSize: 14,
-        fontWeight: FontWeight.bold,
-        align: TextAlign.center,
-      );
+    // generator_front draws here at z-level 1 (with the belt).
+    // generator_back is drawn after all belts in _drawGeneratorBacks (z-level 2).
+    if (isDown) {
+      final genFrontImg = GameAssets.instance.generatorFrontImage;
+      if (genFrontImg != null) {
+        final genW = trX - tlX + GameConfig.generatorFrontExtraW;
+        final genH = genW * (genFrontImg.height / genFrontImg.width);
+        _drawSprite(canvas, genFrontImg,
+            Rect.fromLTWH(tlX + GameConfig.generatorFrontOffsetX,
+                conv.y - genH, genW, genH));
+      } else if (!conv.maintenance) {
+        _drawText(canvas, '↓', conv.x + conv.width / 2, spawnLabelY,
+            color: const Color(0xFF64748B), fontSize: 14,
+            fontWeight: FontWeight.bold, align: TextAlign.center);
+      }
+    } else if (GameAssets.instance.generatorBackImage == null &&
+        !conv.maintenance) {
+      // Fallback arrow only when no generator_back image asset exists
+      _drawText(canvas, '↑', conv.x + conv.width / 2, spawnLabelY,
+          color: const Color(0xFF64748B), fontSize: 14,
+          fontWeight: FontWeight.bold, align: TextAlign.center);
     }
 
     // Belt body
@@ -457,39 +484,44 @@ class GamePainter extends CustomPainter {
       canvas.restore();
     }
 
-    // Colored gate at the end of the belt — sprite if available, otherwise
-    // the layered procedural draw. Direction arrow is rendered on top of
-    // both so the indicator stays legible regardless of art style.
-    final gateRect =
-        Rect.fromLTWH(conv.x - 3, gateY, conv.width + 6, 60);
+    // Gate perspective: close end (isDown → bottom) is full size;
+    // far end (!isDown → top) scales down to match the belt's trapezoidal narrowing.
+    final gatePerspScale =
+        isDown ? 1.0 : (conv.width - 2 * perspDepth) / conv.width;
+    final gateW = (conv.width + 6) * gatePerspScale;
+    final gateH = GameConfig.gateSpriteHeight * gatePerspScale;
+    final gateX = conv.x + conv.width / 2 - gateW / 2;
+    final scaledGateY =
+        isDown ? gateY : conv.y - GameController.gateOffset - gateH;
+    final gateRect = Rect.fromLTWH(gateX, scaledGateY, gateW, gateH);
     final gateImg = GameAssets.instance.gateImage(conv.color);
     final gateOpacity = conv.maintenance ? 0.5 : 1.0;
     if (gateImg != null) {
       _drawSprite(canvas, gateImg, gateRect, opacity: gateOpacity);
     } else {
-      _drawProceduralGate(canvas, conv, gateY);
+      _drawProceduralGate(canvas, conv, gateRect);
     }
   }
 
   // ---- Procedural gate fallback (used when no PNG is present) ----
-  void _drawProceduralGate(Canvas canvas, Conveyor conv, double gateY) {
+  void _drawProceduralGate(Canvas canvas, Conveyor conv, Rect r) {
     final gateOpacity = conv.maintenance ? 0.5 : 1.0;
+    final s = r.height / 40.0; // scale factor relative to original 40px design
     canvas.drawRRect(
-      RRect.fromRectAndRadius(
-          Rect.fromLTWH(conv.x - 3, gateY, conv.width + 6, 40),
-          const Radius.circular(4)),
+      RRect.fromRectAndRadius(r, Radius.circular(4 * s)),
       Paint()..color = conv.color.dark.withValues(alpha: gateOpacity),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(conv.x, gateY + 3, conv.width, 34),
-          const Radius.circular(3)),
+          Rect.fromLTWH(r.left + 3 * s, r.top + 3 * s,
+              r.width - 6 * s, r.height - 6 * s),
+          Radius.circular(3 * s)),
       Paint()..color = conv.color.bg.withValues(alpha: gateOpacity),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(conv.x + 4, gateY + 6, conv.width - 8, 5),
-          const Radius.circular(2)),
+          Rect.fromLTWH(r.left + 4 * s, r.top + 6 * s, r.width - 8 * s, 5 * s),
+          Radius.circular(2 * s)),
       Paint()
         ..color = conv.color.light.withValues(alpha: conv.maintenance ? 0.3 : 0.7),
     );
@@ -573,8 +605,10 @@ class GamePainter extends CustomPainter {
     }
     final onMaint = conv != null && conv.maintenance && !isDragged && !isThrown;
 
+    if (box.entering && !isDragged && !isThrown) return;
+
     double scaleX = 1, scaleY = 1, rotation = 0, liftY = 0;
-    double opacity = (box.entering && !isDragged) || onMaint ? 0.7 : 1.0;
+    double opacity = onMaint ? 0.7 : 1.0;
 
     if (isDragged) {
       final elapsed =
@@ -594,6 +628,14 @@ class GamePainter extends CustomPainter {
       rotation = pose.rotation;
       liftY = pose.liftY;
       opacity *= pose.opacity;
+    }
+
+    // Perspective scale: boxes near the top (far) appear smaller
+    double perspScale = 1.0;
+    if (!isDragged && !isThrown && conv != null) {
+      final convH = game.getCurrentHeight(conv, game.currentTime);
+      final beltT = ((box.y + box.size / 2 - conv.y) / convH).clamp(0.0, 1.0);
+      perspScale = (conv.width - 2 * GameConfig.perspDepth * (1 - beltT)) / conv.width;
     }
 
     final cx = box.x + box.size / 2;
@@ -661,7 +703,7 @@ class GamePainter extends CustomPainter {
     canvas.save();
     canvas.translate(cx, cy);
     canvas.rotate(rotation * pi / 180);
-    canvas.scale(scaleX, scaleY);
+    canvas.scale(scaleX * perspScale, scaleY * perspScale);
     canvas.translate(-cx, -cy);
 
     final boxImg = GameAssets.instance.boxImage(box.color);
@@ -690,7 +732,7 @@ class GamePainter extends CustomPainter {
             GameController.boxSize;
         final raw =
             ((box.y - conv.y - phase) / GameController.boxSize).floor();
-        label = '$raw';
+        label = '${max(0, raw)}';
       } else {
         label = '${box.slotIndex}';
       }

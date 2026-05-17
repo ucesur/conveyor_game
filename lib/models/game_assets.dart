@@ -14,8 +14,10 @@ class GameAssets {
 
   final Map<String, ui.Image> _boxes = {};
   final Map<String, ui.Image> _gates = {};
-  final Map<String, ui.Image> _conveyors = {};
   ui.Image? _background;
+  ui.Image? _generatorFront;
+  ui.Image? _generatorBack;
+  ui.Image? _belt;
   bool _loaded = false;
 
   /// Reserved for future warm-up steps (font registration etc.) so callers
@@ -27,13 +29,14 @@ class GameAssets {
   Future<void> load() async {
     if (_loaded) return;
     _background = await _tryLoad('assets/background/background.png');
+    _generatorFront = await _tryLoad('assets/generator/generator_front.png');
+    _generatorBack = await _tryLoad('assets/generator/generator_back.png');
+    _belt = await _tryLoad('assets/conveyors/belt.png');
     for (final color in BoxColor.all) {
       final box = await _tryLoad('assets/boxes/${color.id}.png');
       if (box != null) _boxes[color.id] = box;
       final gate = await _tryLoad('assets/gates/${color.id}.png');
       if (gate != null) _gates[color.id] = gate;
-      final conveyor = await _tryLoad('assets/conveyors/${color.id}.png');
-      if (conveyor != null) _conveyors[color.id] = conveyor;
     }
     _loaded = true;
   }
@@ -51,7 +54,9 @@ class GameAssets {
   }
 
   ui.Image? get backgroundImage => _background;
+  ui.Image? get generatorFrontImage => _generatorFront;
+  ui.Image? get generatorBackImage => _generatorBack;
   ui.Image? boxImage(BoxColor color) => _boxes[color.id];
   ui.Image? gateImage(BoxColor color) => _gates[color.id];
-  ui.Image? conveyorImage(BoxColor color) => _conveyors[color.id];
+  ui.Image? conveyorImage(BoxColor color) => _belt;
 }
