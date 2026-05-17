@@ -726,13 +726,7 @@ class GamePainter extends CustomPainter {
       } else if (box.slotIndex == null) {
         label = 'E';
       } else if (conv != null) {
-        // Show live rawSlot (physical belt position) so out-of-range values
-        // like 8, 9... are visible rather than collapsed into the opaque "X".
-        final phase = game.beltOffset(conv.speed, conv.direction) %
-            GameController.boxSize;
-        final raw =
-            ((box.y - conv.y - phase) / GameController.boxSize).floor();
-        label = '${max(0, raw)}';
+        label = box.slotIndex == 9999 ? 'X' : '${box.slotIndex}';
       } else {
         label = '${box.slotIndex}';
       }

@@ -115,18 +115,29 @@ class GameController extends ChangeNotifier {
   // boxes so the gap to the belt doesn't drift with the belt phase.
   double _slotY(Conveyor conv, int s) => conv.y + s * boxSize;
 
-  // Scrolled slot position — matches the visual belt surface scroll so ghosts,
-  // debug markers, and landed boxes all use the same coordinate.
+  // Scrolled slot position — slot label [s] rotates with the belt surface so
+  // the label's physical row advances each slot-period. Matches box.y exactly
+  // because both advance at the same speed (conv.speed * dt * 0.1 px/frame).
   double _slotYScrolled(Conveyor conv, int s, double convH) {
-    final phase = beltOffset(conv.speed, conv.direction) % boxSize;
-    return conv.y + s * boxSize + phase;
+    final nSlots = _numSlots(convH);
+    final absOff = beltOffset(conv.speed, conv.direction).abs();
+    final k = (absOff / boxSize).floor();
+    final f = absOff % boxSize;
+    if (conv.direction == ConveyorDirection.down) {
+      return conv.y + (s + k) % nSlots * boxSize + f;
+    } else {
+      return conv.y + ((s - k) % nSlots + nSlots) % nSlots * boxSize - f;
+    }
   }
 
-  // Phase-adjusted slot index from a box's Y. Subtracting the current belt
-  // phase before dividing gives the correct slot even as the belt scrolls.
-  int _rawSlot(Conveyor conv, double y) {
-    final phase = beltOffset(conv.speed, conv.direction) % boxSize;
-    return ((y - conv.y - phase) / boxSize).floor();
+  // Slot label currently positioned at the belt's entry row.
+  // Down belt entry = physical row 0 (top); up belt entry = row N-1 (bottom).
+  int _currentEntrySlot(Conveyor conv, double convH) {
+    final nSlots = _numSlots(convH);
+    final k = (beltOffset(conv.speed, conv.direction).abs() / boxSize).floor();
+    return conv.direction == ConveyorDirection.down
+        ? (nSlots - k % nSlots) % nSlots
+        : (nSlots - 1 + k) % nSlots;
   }
 
   // Single occupancy check used by spawn, belt movement, and drop/throw validation.
@@ -134,11 +145,11 @@ class GameController extends ChangeNotifier {
   // an in-flight box has reserved it via targetSlot, or an entering box is
   // waiting at the entry slot. Using slotIndex (not a position-derived value)
   // keeps spawn, movement, and drop logic consistent with one source of truth.
-  bool _isSlotFree(Conveyor conv, int s, int excludeId) {
+  bool _isSlotFree(Conveyor conv, int s, int excludeId,
+      {bool forDrop = false}) {
     final isDown = conv.direction == ConveyorDirection.down;
     final convH = getCurrentHeight(conv, _lastFrameTime);
-    final nSlots = _numSlots(convH);
-    final entrySlot = isDown ? 0 : nSlots - 1;
+    final entrySlot = _currentEntrySlot(conv, convH);
     return !boxes.any((b) {
       if (b.id == excludeId) return false;
       final anim = b.throwAnim;
@@ -147,7 +158,16 @@ class GameController extends ChangeNotifier {
       }
       if (b.conveyorId != conv.id) return false;
       if (!b.onConveyor) return false;
-      if (b.slotIndex == null) return s == entrySlot;
+      // Entering boxes block spawns always, but block drops only once they
+      // have physically crossed into the belt boundary.
+      if (b.slotIndex == null) {
+        if (forDrop) {
+          final onBelt =
+              isDown ? b.y >= conv.y : b.y + b.size <= conv.y + convH;
+          return onBelt && s == entrySlot;
+        }
+        return s == entrySlot;
+      }
       if (b.slotIndex == _exitSlot) return false;
       return b.slotIndex == s;
     });
@@ -500,8 +520,7 @@ class GameController extends ChangeNotifier {
 
       final isDown = conv.direction == ConveyorDirection.down;
       final convH = getCurrentHeight(conv, now);
-      final entrySlot = isDown ? 0 : _numSlots(convH) - 1;
-      if (!_isSlotFree(conv, entrySlot, -1)) continue;
+      if (!_isSlotFree(conv, _currentEntrySlot(conv, convH), -1)) continue;
 
       final colorIdx = _random.nextInt(conveyors.length);
       boxes.add(Box(
@@ -552,19 +571,21 @@ class GameController extends ChangeNotifier {
         continue;
       }
 
-      // Entry slot: slot 0 for direction=down (top), slot N-1 for direction=up (bottom).
-      final entrySlot = isDown ? 0 : nSlots - 1;
+      // Physical entry row (fixed: row 0 for down, row N-1 for up).
+      final entryRow = isDown ? 0 : nSlots - 1;
+      // Rotating slot label currently at the entry row.
+      final entryLabel = _currentEntrySlot(conv, convH);
 
-      // Entering phase: box outside belt, moving toward the fixed belt top.
+      // Entering phase: box outside belt, moving toward the fixed belt entry.
       // Uses _slotY (unscrolled) so the approach target doesn't drift with the
       // belt phase — prevents boxes getting stranded when phase wraps.
       if (box.slotIndex == null) {
-        final targetY = _slotY(conv, entrySlot);
+        final targetY = _slotY(conv, entryRow);
         final dist = (box.y - targetY).abs();
         if (dist <= moveAmount + 0.5) {
-          if (_isSlotFree(conv, entrySlot, box.id)) {
-            box.y = _slotYScrolled(conv, entrySlot, convH);
-            box.slotIndex = entrySlot;
+          if (_isSlotFree(conv, entryLabel, box.id)) {
+            box.y = _slotYScrolled(conv, entryLabel, convH);
+            box.slotIndex = entryLabel;
             box.entering = false;
           }
           // else wait just outside for the entry slot to clear
@@ -578,12 +599,9 @@ class GameController extends ChangeNotifier {
       // On belt: move continuously at belt speed, same rate as the belt surface.
       box.y += (isDown ? 1.0 : -1.0) * moveAmount;
 
-      // Derive slot index from phase-adjusted Y so it tracks scrolled slots.
-      final rawSlot = _rawSlot(conv, box.y);
-      if (rawSlot >= nSlots || rawSlot < 0) {
+      // Transition to exit when the box's physical Y reaches the gate end.
+      if (isDown ? box.y + box.size >= conv.y + convH : box.y <= conv.y) {
         box.slotIndex = _exitSlot;
-      } else {
-        box.slotIndex = rawSlot.clamp(0, nSlots - 1);
       }
 
       keep.add(box);
@@ -628,10 +646,14 @@ class GameController extends ChangeNotifier {
         } else {
           if (curr.y < ahead.y + ahead.size) curr.y = ahead.y + ahead.size;
         }
-        final rs = _rawSlot(conv, curr.y);
-        final ns = _numSlots(getCurrentHeight(conv, now));
-        curr.slotIndex =
-            (rs >= ns || rs < 0) ? _exitSlot : rs.clamp(0, ns - 1);
+        final convH = getCurrentHeight(conv, now);
+        final ns = _numSlots(convH);
+        if (curr.slotIndex! >= ns ||
+            (isDown
+                ? curr.y + curr.size >= conv.y + convH
+                : curr.y <= conv.y)) {
+          curr.slotIndex = _exitSlot;
+        }
       }
     }
   }
@@ -921,9 +943,8 @@ class GameController extends ChangeNotifier {
       return;
     }
     final h = getCurrentHeight(sourceConv, now);
-    final nSlots = _numSlots(h);
-    final entrySlot = sourceConv.direction == ConveyorDirection.down ? 0 : nSlots - 1;
-    final slot = _findFreeSlotIndex(box, sourceConv, h) ?? entrySlot;
+    final fallbackSlot = _currentEntrySlot(sourceConv, h);
+    final slot = _findFreeSlotIndex(box, sourceConv, h) ?? fallbackSlot;
     _startThrow(box, sourceConv, slot, now);
   }
 
@@ -945,7 +966,7 @@ class GameController extends ChangeNotifier {
           radius == 0 ? [closestSlot] : [closestSlot - radius, closestSlot + radius];
       for (final s in candidates) {
         if (s < 0 || s >= nSlots) continue;
-        if (_isSlotFree(targetConv, s, box.id)) return s;
+        if (_isSlotFree(targetConv, s, box.id, forDrop: true)) return s;
       }
     }
     return null;
@@ -1004,11 +1025,11 @@ class GameController extends ChangeNotifier {
           // lands in sync with the belt regardless of phase drift during flight.
           if (anim.targetSlot != _exitSlot && anim.targetSlot < ns) {
             box.y = _slotYScrolled(tConv, anim.targetSlot, convH);
+            box.slotIndex = anim.targetSlot;
           } else {
             box.y = anim.endY;
+            box.slotIndex = _exitSlot;
           }
-          final rs = _rawSlot(tConv, box.y);
-          box.slotIndex = (rs < 0 || rs >= ns) ? _exitSlot : rs.clamp(0, ns - 1);
         } else {
           box.y = anim.endY;
         }
