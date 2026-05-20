@@ -5,8 +5,8 @@ class GameConfig {
 
   // ── Canvas defaults ──────────────────────────────────────────────────────
   // Actual values are overwritten by GameController.setGameSize() at runtime.
-  static const double baseWidth = 360.0;
-  static const double baseHeight = 600.0;
+  static const double baseWidth = 400.0;
+  static const double baseHeight = 800.0;
 
   // ── HUD ──────────────────────────────────────────────────────────────────
   static const double hudBottom = 114.0;
@@ -42,7 +42,7 @@ class GameConfig {
   // Top of each belt leans toward the layout centre by
   //   (beltCenterX − layoutCenterX) × factor  pixels.
   // 0 = no lean; 0.15 ≈ 20 px for the outermost belt (132 px from centre).
-  static const double conveyorPerspectiveXFactor = 0.15;
+  static const double conveyorPerspectiveXFactor = 0.25;
 
   // ── Box spawn frequency ──────────────────────────────────────────────────
   // Interval between spawns on a single belt at level 1 (ms).
@@ -52,6 +52,17 @@ class GameConfig {
   static const double spawnIntervalMin = 4000;
   static const double spawnIntervalJitterMin = 0.7;
   static const double spawnIntervalJitterMax = 1.3;
+
+  // ── Combination area ─────────────────────────────────────────────────────
+  // Panel sits between the progress bar (y≈64) and the generator/conveyor zone.
+  static const double comboAreaTop = 80.0;
+  static const double comboAreaHeight = 66.0;
+  // Recipe display: comboSlotCount colored boxes with arrows between them.
+  static const int comboSlotCount = 2;
+  static const double comboRecipeBoxSize = 38.0;
+  static const double comboRecipeStartX = 12.0;
+  // Space between adjacent recipe boxes (includes the ▶ arrow glyph).
+  static const double comboRecipeSpacer = 20.0;
 
   // ── Generator ────────────────────────────────────────────────────────────
   // Front = isDown belt (spawn end at top).  Back = isUp belt (spawn end at bottom).

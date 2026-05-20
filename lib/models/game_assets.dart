@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 import 'package:flutter/services.dart';
 import 'box_color.dart';
+import 'special_type.dart';
 
 /// Singleton that decodes box / gate / conveyor PNGs once at startup so the
 /// painter can blit them each frame without re-reading the asset bundle.
@@ -14,6 +15,7 @@ class GameAssets {
 
   final Map<String, ui.Image> _boxes = {};
   final Map<String, ui.Image> _gates = {};
+  final Map<String, ui.Image> _specials = {};
   ui.Image? _background;
   ui.Image? _generatorFront;
   ui.Image? _generatorBack;
@@ -38,6 +40,10 @@ class GameAssets {
       final gate = await _tryLoad('assets/gates/${color.id}.png');
       if (gate != null) _gates[color.id] = gate;
     }
+    for (final type in SpecialType.values) {
+      final img = await _tryLoad('assets/boxes/specials/${type.name}.png');
+      if (img != null) _specials[type.name] = img;
+    }
     _loaded = true;
   }
 
@@ -59,4 +65,5 @@ class GameAssets {
   ui.Image? boxImage(BoxColor color) => _boxes[color.id];
   ui.Image? gateImage(BoxColor color) => _gates[color.id];
   ui.Image? conveyorImage(BoxColor color) => _belt;
+  ui.Image? specialImage(SpecialType type) => _specials[type.name];
 }

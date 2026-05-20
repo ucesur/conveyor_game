@@ -59,6 +59,7 @@ flutter:
 
   assets:
     - assets/boxes/
+    - assets/boxes/specials/
     - assets/gates/
     - assets/conveyors/
     - assets/background/

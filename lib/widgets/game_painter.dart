@@ -6,6 +6,7 @@ import '../game/game_config.dart';
 import '../game/game_controller.dart';
 import '../models/box.dart';
 import '../models/conveyor.dart';
+import '../models/special_type.dart';
 import '../models/falling_box.dart';
 import '../models/game_assets.dart';
 
@@ -30,6 +31,7 @@ class GamePainter extends CustomPainter {
 
     _drawBackground(canvas);
     _drawHUD(canvas);
+    if (game.comboArea != null) _drawComboArea(canvas, now);
 
     for (final conv in game.conveyors) {
       _drawConveyor(canvas, conv, now);
@@ -43,6 +45,157 @@ class GamePainter extends CustomPainter {
     _drawGeneratorBacks(canvas, now);
     _drawFallingBoxes(canvas);
     _drawPopups(canvas, now);
+  }
+
+  // ---- Combination area ----
+  // Draws the recipe sequence and the reward gift. Progress is shown by
+  // lighting up completed slots and pulsing the current target slot.
+  // When the sequence is complete the panel border flashes and all slots
+  // show a check mark until the next recipe generates (1 500 ms).
+  void _drawComboArea(Canvas canvas, double now) {
+    final area = game.comboArea!;
+    final gw = GameController.gameWidth;
+    final panelY = GameConfig.comboAreaTop;
+    final panelH = GameConfig.comboAreaHeight;
+    final boxSz = GameConfig.comboRecipeBoxSize;
+    final spacer = GameConfig.comboRecipeSpacer;
+    final startX = GameConfig.comboRecipeStartX;
+
+    final isComplete = area.completionTime != null;
+    final completePulse = isComplete
+        ? (0.5 + 0.5 * sin((now - area.completionTime!) * 0.015)).clamp(0.0, 1.0)
+        : 0.0;
+
+    // Vertical center for recipe boxes inside the panel.
+    final boxY = panelY + (panelH - boxSz) / 2;
+    // Right edge of the last recipe box → used to place the separator.
+    final recipeRight = startX +
+        GameConfig.comboSlotCount * boxSz +
+        (GameConfig.comboSlotCount - 1) * spacer;
+    final sepX = recipeRight + 12.0;
+    final rewardCenterX = (sepX + gw - 4) / 2;
+    final rewardCenterY = panelY + panelH / 2;
+
+    // Panel background
+    final panelRRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(4, panelY, gw - 8, panelH),
+      const Radius.circular(8),
+    );
+    canvas.drawRRect(panelRRect, Paint()..color = const Color(0xFF0F172A));
+
+    // Panel border — pulses gold on completion
+    canvas.drawRRect(
+      panelRRect,
+      Paint()
+        ..color = isComplete
+            ? const Color(0xFFFBBF24).withValues(alpha: 0.6 + completePulse * 0.4)
+            : const Color(0xFF1E3A5F)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = isComplete ? 2.0 : 1.0,
+    );
+
+    // Separator
+    canvas.drawLine(
+      Offset(sepX, panelY + 8),
+      Offset(sepX, panelY + panelH - 8),
+      Paint()
+        ..color = const Color(0xFF1E3A5F)
+        ..strokeWidth = 1,
+    );
+
+    // === Recipe boxes ===
+    for (int i = 0; i < area.recipe.length; i++) {
+      final color = area.recipe[i];
+      final boxX = startX + i * (boxSz + spacer);
+      final rect = Rect.fromLTWH(boxX, boxY, boxSz, boxSz);
+      final isDone = i < area.progress || isComplete;
+      final isCurrent = !isComplete && i == area.progress;
+      final alpha = isDone || isCurrent ? 1.0 : 0.35;
+      final pulse = isCurrent ? (0.5 + 0.5 * sin(now * 0.008)) : 0.0;
+
+      // Box body — sprite if loaded, procedural fallback otherwise
+      final boxImg = GameAssets.instance.boxImage(color);
+      if (boxImg != null) {
+        _drawSprite(canvas, boxImg, rect, opacity: alpha);
+      } else {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect, const Radius.circular(6)),
+          Paint()..color = color.dark.withValues(alpha: alpha),
+        );
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(boxX + 2, boxY + 2, boxSz - 4, boxSz - 4),
+            const Radius.circular(5),
+          ),
+          Paint()..color = color.bg.withValues(alpha: alpha),
+        );
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(boxX + 4, boxY + 4, boxSz - 8, 5),
+            const Radius.circular(3),
+          ),
+          Paint()..color = color.light.withValues(alpha: alpha * 0.6),
+        );
+      }
+
+      // Pulsing outline on the current target slot
+      if (isCurrent) {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(rect.inflate(3), const Radius.circular(9)),
+          Paint()
+            ..color = color.light.withValues(alpha: 0.4 + pulse * 0.6)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2,
+        );
+      }
+
+      // Check mark on completed slots
+      if (isDone) {
+        _drawText(canvas, '✓',
+            boxX + boxSz / 2, boxY + boxSz / 2,
+            color: Colors.white,
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            align: TextAlign.center,
+            baselineCenter: true);
+      }
+    }
+
+    // === Reward section — shows the special item that will be spawned ===
+    final rewardAlpha = isComplete ? (0.7 + completePulse * 0.3) : 1.0;
+    const rewardColor = Color(0xFFFF6600);
+    final specialImg = GameAssets.instance.specialImage(area.reward);
+    final rewardLabel = switch (area.reward) {
+      SpecialType.bomb => 'BOMB!',
+    };
+    final spriteSize = 32.0;
+    final spriteRect = Rect.fromCenter(
+      center: Offset(rewardCenterX, rewardCenterY - 6),
+      width: spriteSize,
+      height: spriteSize,
+    );
+    if (specialImg != null) {
+      _drawSprite(canvas, specialImg, spriteRect, opacity: rewardAlpha);
+    } else {
+      // Procedural fallback: dark rounded square with bomb emoji
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(spriteRect, const Radius.circular(6)),
+        Paint()
+          ..color = const Color(0xFF1A1A1A).withValues(alpha: rewardAlpha),
+      );
+      _drawText(canvas, '💣', rewardCenterX, rewardCenterY - 6,
+          color: Colors.white.withValues(alpha: rewardAlpha),
+          fontSize: 20,
+          align: TextAlign.center,
+          baselineCenter: true);
+    }
+    _drawText(canvas, rewardLabel,
+        rewardCenterX, rewardCenterY + spriteSize / 2 + 2,
+        color: rewardColor.withValues(alpha: rewardAlpha),
+        fontSize: 10,
+        fontWeight: FontWeight.bold,
+        align: TextAlign.center,
+        baselineCenter: true);
   }
 
   // ---- Background ----
@@ -313,6 +466,11 @@ class GamePainter extends CustomPainter {
     }
     canvas.restore();
 
+    // Returns the visual center-X of the belt at fractional height [t] (0=top).
+    // The trapezoid top shifts by xLean, so the center drifts linearly with depth.
+    double beltCenterAt(double t) =>
+        conv.x + conv.width / 2 - xLean * (1 - t);
+
     // Resize flash overlay
     if (conv.resizing) {
       final fillPaint = Paint()
@@ -323,7 +481,7 @@ class GamePainter extends CustomPainter {
       _drawText(
         canvas,
         isGrowing ? '↑' : '↓',
-        conv.x + conv.width / 2,
+        beltCenterAt(18 / h),
         conv.y + 18,
         color: const Color(0xFF06B6D4).withValues(alpha: arrowOpacity),
         fontSize: 16,
@@ -333,7 +491,7 @@ class GamePainter extends CustomPainter {
       _drawText(
         canvas,
         isGrowing ? '↓' : '↑',
-        conv.x + conv.width / 2,
+        beltCenterAt((h - 6) / h),
         conv.y + h - 6,
         color: const Color(0xFF06B6D4).withValues(alpha: arrowOpacity),
         fontSize: 16,
@@ -344,58 +502,21 @@ class GamePainter extends CustomPainter {
 
     // Maintenance (reversing) overlay
     if (conv.maintenance) {
-      _drawDiagonalStripes(canvas, Rect.fromLTWH(conv.x, conv.y, conv.width, h),
-          opacity: 0.35 + flash * 0.35);
+      // Stripes must cover the full trapezoid bounding box, not just conv.x..conv.x+width.
+      // With large xLean the top corners extend outside that rectangle, so using it
+      // as the clip rect inside _drawDiagonalStripes would cut off those corners.
+      final stripeRect = Rect.fromLTRB(
+          min(tlX, blX), conv.y, max(trX, brX), conv.y + h);
+      _drawDiagonalStripes(canvas, stripeRect, opacity: 0.35 + flash * 0.35);
 
-      // The label and text must be centred on the belt's *visual* centre at
-      // mid-height, which shifts by xLean relative to the geometric centre:
-      //   visMidX = conv.x + w/2 − xLean/2   (xLean*(1−t) at t=0.5)
-      //
-      // Maximum safe half-width so the label rectangle stays inside the
-      // trapezoid at its tightest row (the top of the label):
-      //   safeHalf = (w−p)/2 − labelH*(p+|xLean|)/(2h)
-      // where p = perspDepth.  Derived by solving right_x(tTopLabel) −
-      // visMidX ≥ labelW/2 for the outer belt corner constraint.
-      final visMidX = conv.x + conv.width / 2 - xLean / 2;
-      final labelH = min(h - 16.0, 160.0);
-      final safeHalf = (conv.width - perspDepth) / 2 -
-          labelH * (perspDepth + xLean.abs()) / (2 * h);
-      final labelW = (safeHalf * 2 * 0.88).clamp(16.0, 44.0);
-      final labelTop = conv.y + h / 2 - labelH / 2;
-      final labelRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(visMidX - labelW / 2, labelTop, labelW, labelH),
-        const Radius.circular(4),
-      );
-      canvas.drawRRect(
-          labelRect, Paint()..color = const Color(0xFF0F172A).withValues(alpha: 0.85));
-
-      if (h > 60) {
-        // fontSize → visual width after rotation; must fit in labelW.
-        // labelH / 7.5 ≈ 88 % fill of visual height with "MAINTENANCE".
-        final fontSize = (labelH / 7.5).clamp(6.0, labelW * 0.75);
-        canvas.save();
-        canvas.translate(visMidX, conv.y + h / 2);
-        canvas.rotate(-pi / 2);
-        _drawText(canvas, 'MAINTENANCE', 0, 0,
-            color: const Color(0xFFFBBF24),
-            fontSize: fontSize,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1,
-            align: TextAlign.center,
-            baselineCenter: true);
-        canvas.restore();
-      }
-
-      // Pending-direction badges at both ends — also use visMidX so they
-      // sit on the visible belt centre, not the geometric centre.
+      // Pending-direction badges: position at the perspective-correct center
+      // for each badge's Y so they follow the belt lean at both ends.
       for (final yPos in [conv.y + 20, conv.y + h - 20]) {
-        final badgeT = (yPos - conv.y) / h;
-        final badgeX = conv.x + conv.width / 2 - xLean * (1 - badgeT);
+        final badgeX = beltCenterAt((yPos - conv.y) / h);
         canvas.drawCircle(
             Offset(badgeX, yPos),
             10,
-            Paint()
-              ..color = const Color(0xFF0F172A).withValues(alpha: 0.9));
+            Paint()..color = const Color(0xFF0F172A).withValues(alpha: 0.9));
         _drawText(canvas, pendingArrow, badgeX, yPos,
             color: const Color(0xFFFBBF24),
             fontSize: 14,
@@ -407,14 +528,24 @@ class GamePainter extends CustomPainter {
 
     canvas.restore();
 
-    // Ghost drop target — drawn on top of the belt surface, clipped to belt body
+    // Ghost drop target — drawn on top of the belt surface, clipped to belt body.
+    // Applies the same perspective scale + xLean as real boxes so the ghost
+    // shrinks toward the far end of the belt instead of staying full-size.
     final slots = game.landingSlots;
     if (slots != null && slots.containsKey(conv.id)) {
       final ghostY = slots[conv.id]!;
       const ghostSize = GameController.boxSize;
-      final ghostBeltT = ((ghostY + ghostSize / 2 - conv.y) / h).clamp(0.0, 1.0);
+      final ghostBeltT =
+          ((ghostY + ghostSize / 2 - conv.y) / h).clamp(0.0, 1.0);
+      final ghostPerspScale =
+          (conv.width - 2 * perspDepth * (1 - ghostBeltT)) / conv.width;
       final ghostLeanX = -xLean * (1 - ghostBeltT);
-      final ghostX = conv.x + (conv.width - ghostSize) / 2 + ghostLeanX;
+      final ghostVisualSize = ghostSize * ghostPerspScale;
+      // Centre X follows the belt lean; Y anchors to the same visual centre as
+      // a real box sitting in this slot (scale inward from the centre).
+      final ghostDrawX =
+          conv.x + conv.width / 2 + ghostLeanX - ghostVisualSize / 2;
+      final ghostDrawY = ghostY + ghostSize / 2 * (1 - ghostPerspScale);
       final draggedBox =
           game.boxes.where((b) => b.id == game.draggedBoxId).firstOrNull;
       final fillColor = draggedBox?.color.bg ?? Colors.white;
@@ -425,7 +556,7 @@ class GamePainter extends CustomPainter {
       canvas.clipPath(bodyPath);
       canvas.drawRRect(
         RRect.fromRectAndRadius(
-            Rect.fromLTWH(ghostX, ghostY, ghostSize, ghostSize),
+            Rect.fromLTWH(ghostDrawX, ghostDrawY, ghostVisualSize, ghostVisualSize),
             const Radius.circular(6)),
         Paint()..color = fillColor.withValues(alpha: 0.45 * pulse),
       );
@@ -434,7 +565,7 @@ class GamePainter extends CustomPainter {
       _drawDashedRRect(
         canvas,
         RRect.fromRectAndRadius(
-            Rect.fromLTWH(ghostX, ghostY, ghostSize, ghostSize),
+            Rect.fromLTWH(ghostDrawX, ghostDrawY, ghostVisualSize, ghostVisualSize),
             const Radius.circular(6)),
         borderColor,
         2.0,
@@ -471,35 +602,6 @@ class GamePainter extends CustomPainter {
         ..close(),
       Paint()..color = rightRailColor,
     );
-
-    // Drive-roller end caps
-    final endCapFill = Paint()..color = const Color(0xFF1E293B);
-    final endCapStroke = Paint()
-      ..color = const Color(0xFF64748B)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawCircle(Offset(conv.x + conv.width / 2, conv.y + 6), 5, endCapFill);
-    canvas.drawCircle(Offset(conv.x + conv.width / 2, conv.y + 6), 5, endCapStroke);
-    canvas.drawCircle(
-        Offset(conv.x + conv.width / 2, conv.y + h - 6), 5, endCapFill);
-    canvas.drawCircle(
-        Offset(conv.x + conv.width / 2, conv.y + h - 6), 5, endCapStroke);
-
-    // Speed pips in the middle of the belt
-    if (!conv.maintenance && !conv.resizing && h > 80) {
-      for (int i = 0; i < 3; i++) {
-        final filled = conv.speed > (0.3 + i * 0.15);
-        final paint = Paint()
-          ..color = (filled
-                  ? const Color(0xFFFBBF24)
-                  : const Color(0xFF334155))
-              .withValues(alpha: filled ? 0.9 : 0.6);
-        canvas.drawCircle(
-            Offset(conv.x + conv.width / 2, conv.y + h / 2 - 12 + i * 12),
-            2,
-            paint);
-      }
-    }
 
     // Debug: slot boundaries scrolling with the belt surface
     if (game.debugSlots) {
@@ -749,22 +851,30 @@ class GamePainter extends CustomPainter {
       );
     }
 
-    // Body — sprite or procedural, transformed around the lifted center.
+    // Body — special sprite > color sprite > procedural, transformed around
+    // the lifted center.
     canvas.save();
     canvas.translate(cx, cy);
     canvas.rotate(rotation * pi / 180);
     canvas.scale(scaleX * perspScale, scaleY * perspScale);
     canvas.translate(-cx, -cy);
 
-    final boxImg = GameAssets.instance.boxImage(box.color);
-    if (boxImg != null) {
-      _drawSprite(
-          canvas,
-          boxImg,
-          Rect.fromLTWH(box.x + leanX, box.y, box.size, box.size),
-          opacity: opacity);
+    final bodyRect = Rect.fromLTWH(box.x + leanX, box.y, box.size, box.size);
+    final specialImg = box.specialType != null
+        ? GameAssets.instance.specialImage(box.specialType!)
+        : null;
+    if (specialImg != null) {
+      _drawSprite(canvas, specialImg, bodyRect, opacity: opacity);
     } else {
-      _drawProceduralBox(canvas, box, opacity, xOffset: leanX);
+      final boxImg = GameAssets.instance.boxImage(box.color);
+      if (boxImg != null) {
+        _drawSprite(canvas, boxImg, bodyRect, opacity: opacity);
+      } else if (box.specialType != null) {
+        // Procedural fallback for unknown special types: dark box + emoji
+        _drawProceduralSpecialBox(canvas, box, opacity, xOffset: leanX);
+      } else {
+        _drawProceduralBox(canvas, box, opacity, xOffset: leanX);
+      }
     }
     canvas.restore();
 
@@ -826,6 +936,36 @@ class GamePainter extends CustomPainter {
     );
   }
 
+  void _drawProceduralSpecialBox(Canvas canvas, Box box, double opacity,
+      {double xOffset = 0.0}) {
+    final x = box.x + xOffset;
+    // Dark body with orange glow border
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromLTWH(x, box.y, box.size, box.size),
+          const Radius.circular(6)),
+      Paint()..color = const Color(0xFF1A1A1A).withValues(alpha: opacity),
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromLTWH(x, box.y, box.size, box.size),
+          const Radius.circular(6)),
+      Paint()
+        ..color = const Color(0xFFFF6600).withValues(alpha: opacity * 0.9)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+    final icon = switch (box.specialType) {
+      SpecialType.bomb => '💣',
+      _ => '?',
+    };
+    _drawText(canvas, icon, x + box.size / 2, box.y + box.size / 2,
+        color: Colors.white.withValues(alpha: opacity),
+        fontSize: 22,
+        align: TextAlign.center,
+        baselineCenter: true);
+  }
+
   // ---- Falling boxes (drop into gate after scoring) ----
   void _drawFallingBoxes(Canvas canvas) {
     for (final fb in game.fallingBoxes) {
@@ -876,16 +1016,16 @@ class GamePainter extends CustomPainter {
   }
 
   // ---- Particles (dust on landing, etc.) ----
+  // Reuse a single Paint across all particles — avoids allocating one object
+  // per particle per frame (which at 20+ particles × 60 fps causes GC pressure).
+  final Paint _particlePaint = Paint();
+
   void _drawParticles(Canvas canvas, double now) {
+    if (game.particles.isEmpty) return;
     for (final p in game.particles) {
       final t = ((now - p.startTime) / p.lifetime).clamp(0.0, 1.0);
-      final opacity = 1 - t;
-      final size = p.size * (1 - t * 0.3);
-      canvas.drawCircle(
-        Offset(p.x, p.y),
-        size,
-        Paint()..color = p.color.withValues(alpha: opacity),
-      );
+      _particlePaint.color = p.color.withValues(alpha: 1 - t);
+      canvas.drawCircle(Offset(p.x, p.y), p.size * (1 - t * 0.3), _particlePaint);
     }
   }
 

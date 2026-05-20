@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import '../game/game_config.dart';
 import '../game/game_controller.dart';
 import '../models/box_color.dart';
 import '../models/game_assets.dart';
@@ -73,7 +74,10 @@ class _GameScreenState extends State<GameScreen>
     return Scaffold(
       backgroundColor: const Color(0xFF0F172A),
       body: SafeArea(
-        child: LayoutBuilder(builder: (context, constraints) {
+        child: Center(
+          child: AspectRatio(
+            aspectRatio: GameConfig.baseWidth / GameConfig.baseHeight,
+            child: LayoutBuilder(builder: (context, constraints) {
           final size = Size(constraints.maxWidth, constraints.maxHeight);
           // Inform the controller of the actual screen dimensions so conveyor
           // heights and game-space coordinates scale correctly.
@@ -173,6 +177,45 @@ class _GameScreenState extends State<GameScreen>
                             ),
                           ),
                       ],
+                    );
+                  },
+                ),
+              ),
+              // --- Debug: haptics toggle (visible only when debug is on) ---
+              Positioned(
+                bottom: 8,
+                right: 88,
+                child: AnimatedBuilder(
+                  animation: _game,
+                  builder: (context, _) {
+                    if (!_game.debugSlots) return const SizedBox.shrink();
+                    final on = _game.hapticsEnabled;
+                    return GestureDetector(
+                      onTap: _game.toggleHaptics,
+                      behavior: HitTestBehavior.opaque,
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: on
+                              ? const Color(0xFF22C55E).withValues(alpha: 0.25)
+                              : const Color(0xFF1E293B),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: on
+                                ? const Color(0xFF22C55E)
+                                : const Color(0xFF475569),
+                            width: 1,
+                          ),
+                        ),
+                        child: Icon(
+                          on ? Icons.vibration : Icons.phone_android,
+                          color: on
+                              ? const Color(0xFF22C55E)
+                              : const Color(0xFF475569),
+                          size: 18,
+                        ),
+                      ),
                     );
                   },
                 ),
@@ -282,6 +325,8 @@ class _GameScreenState extends State<GameScreen>
             ],
           );
         }),
+          ),
+        ),
       ),
     );
   }

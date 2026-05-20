@@ -1,11 +1,14 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/box.dart';
 import '../models/box_color.dart';
 import '../models/conveyor.dart';
 import '../models/falling_box.dart';
 import '../models/particle.dart';
+import '../models/combo_area.dart';
 import '../models/popup.dart';
+import '../models/special_type.dart';
 import 'game_config.dart';
 
 enum GameState { menu, playing, paused, gameover }
@@ -56,6 +59,7 @@ class GameController extends ChangeNotifier {
   int highScore = 0;
   bool debugSlots = false;
   bool debugPaused = false;
+  bool hapticsEnabled = true;
   double _debugFreezeTime = 0;
 
   void toggleDebugSlots() {
@@ -68,6 +72,24 @@ class GameController extends ChangeNotifier {
     debugPaused = !debugPaused;
     if (debugPaused) _debugFreezeTime = _lastFrameTime;
     notifyListeners();
+  }
+
+  void toggleHaptics() {
+    hapticsEnabled = !hapticsEnabled;
+    if (hapticsEnabled) HapticFeedback.lightImpact();
+    notifyListeners();
+  }
+
+  void _hapticLight() {
+    if (hapticsEnabled) HapticFeedback.lightImpact();
+  }
+
+  void _hapticMedium() {
+    if (hapticsEnabled) HapticFeedback.mediumImpact();
+  }
+
+  void _hapticHeavy() {
+    if (hapticsEnabled) HapticFeedback.heavyImpact();
   }
 
   void debugToggleMaintenance(int conveyorId) {
@@ -85,17 +107,30 @@ class GameController extends ChangeNotifier {
       conv.maintenance = true;
       // Use maxFinite so _endMaintenance timer never fires; only toggled off manually.
       conv.maintenanceEnd = double.maxFinite;
-      boxes.removeWhere((b) => b.conveyorId == conv.id && b.id != draggedBoxId);
+      boxes.removeWhere((b) =>
+          b.conveyorId == conv.id &&
+          b.id != draggedBoxId &&
+          b.specialType == null);
     }
     notifyListeners();
   }
   List<Box> boxes = [];
   List<Conveyor> conveyors = [];
   List<FallingBox> fallingBoxes = [];
+  ComboArea? comboArea;
   int? draggedBoxId;
   List<Popup> popups = [];
   List<Particle> particles = [];
   List<BoxColor> _shuffledColors = [];
+
+  // ---- Deferred mutation queues (used inside _moveBoxes) ----
+  // _moveBoxes iterates `boxes` with a for-in loop; any code that runs
+  // inside that loop (gate hits, combo completion, bomb effect) must NOT
+  // call boxes.add / boxes.removeWhere directly — Dart throws
+  // ConcurrentModificationException.  Instead they write to these queues
+  // and _moveBoxes flushes them after the loop.
+  final List<Box> _pendingBoxes = [];
+  final Set<int> _pendingRemovals = {};
 
   // ---- Internal ----
   int _boxIdCounter = 0;
@@ -287,6 +322,7 @@ class GameController extends ChangeNotifier {
     conveyors = newConveyors;
     boxes = [];
     fallingBoxes = [];
+    comboArea = _generateComboArea();
     particles = [];
     final now = _lastFrameTime;
     _lastReverseCheck = now + 3000;
@@ -307,6 +343,7 @@ class GameController extends ChangeNotifier {
     particles = [];
     fallingBoxes = [];
     draggedBoxId = null;
+    comboArea = null;
     _pauseStart = 0;
     _shakeUntil = 0;
     _comboCount = 0;
@@ -341,6 +378,7 @@ class GameController extends ChangeNotifier {
     fallingBoxes = [];
     popups = [];
     particles = [];
+    comboArea = null;
     draggedBoxId = null;
     notifyListeners();
   }
@@ -372,6 +410,8 @@ class GameController extends ChangeNotifier {
     for (final particle in particles) {
       particle.startTime += delta;
     }
+    final ct = comboArea?.completionTime;
+    if (ct != null) comboArea!.completionTime = ct + delta;
   }
 
   void _addPopup(double x, double y, String text, Color color,
@@ -433,6 +473,7 @@ class GameController extends ChangeNotifier {
     _spawnBoxes(now);
     _moveBoxes(now, dt);
     _checkLevelUp(now);
+    _checkComboReset(now);
 
     notifyListeners();
   }
@@ -456,7 +497,11 @@ class GameController extends ChangeNotifier {
     target.maintenance = true;
     target.maintenanceEnd = now + maintenanceDuration;
 
-    boxes.removeWhere((b) => b.conveyorId == target.id && b.id != draggedBoxId);
+    // Special boxes survive maintenance — they're too valuable to discard.
+    boxes.removeWhere((b) =>
+        b.conveyorId == target.id &&
+        b.id != draggedBoxId &&
+        b.specialType == null);
 
     _addPopup(target.x + target.width / 2, target.y + 10, '⚠',
         const Color(0xFFFBBF24),
@@ -559,6 +604,8 @@ class GameController extends ChangeNotifier {
 
   void _moveBoxes(double now, double dt) {
     int wrongHits = 0;
+    _pendingBoxes.clear();
+    _pendingRemovals.clear();
     final List<Box> keep = [];
 
     for (final box in boxes) {
@@ -627,9 +674,21 @@ class GameController extends ChangeNotifier {
       keep.add(box);
     }
 
+    // Apply bomb removals: some boxes may have been added to keep before
+    // _triggerBomb ran (they appeared earlier in the iteration order).
+    if (_pendingRemovals.isNotEmpty) {
+      keep.removeWhere((b) => _pendingRemovals.contains(b.id));
+    }
+
     _resolveOverlaps(keep, now);
 
     boxes = keep;
+
+    // Flush boxes spawned during gate processing (e.g., special item from combo).
+    if (_pendingBoxes.isNotEmpty) {
+      boxes.addAll(_pendingBoxes);
+      _pendingBoxes.clear();
+    }
 
     if (wrongHits > 0) {
      // lives -= wrongHits;
@@ -682,6 +741,26 @@ class GameController extends ChangeNotifier {
   int _processGateHit(Box box, Conveyor conv, double convH, bool isDown) {
     final gateY = isDown ? conv.y + convH : conv.y;
     final popupY = isDown ? gateY - 10 : gateY + 10;
+
+    // Special items bypass color matching and trigger their own effect.
+    if (box.specialType != null) {
+      _triggerSpecial(box.specialType!, conv, isDown, gateY, popupY);
+      final fbStartY = isDown ? gateY - box.size : gateY;
+      final fbDisappearY = isDown
+          ? gateY + gateOffset + gateHeight
+          : gateY - gateOffset - gateHeight;
+      fallingBoxes.add(FallingBox(
+        x: box.x,
+        y: fbStartY,
+        vy: isDown ? 0.4 : -0.4,
+        size: box.size,
+        color: box.color,
+        startY: fbStartY,
+        disappearY: fbDisappearY,
+      ));
+      return 0;
+    }
+
     int wrong = 0;
     if (box.color.id == conv.color.id) {
       if (_comboColorId == box.color.id) {
@@ -696,12 +775,15 @@ class GameController extends ChangeNotifier {
       _addPopup(conv.x + conv.width / 2, popupY, label,
           const Color(0xFF22C55E),
           size: _comboCount >= 2 ? 26 : 22);
+      _hapticMedium();
+      _advanceCombo(box.color, _lastFrameTime);
     } else {
       wrong = 1;
       _comboCount = 0;
       _comboColorId = null;
       _addPopup(conv.x + conv.width / 2, popupY, '✗',
           const Color(0xFFEF4444));
+      _hapticHeavy();
     }
     final fbStartY = isDown ? gateY - box.size : gateY;
     final fbDisappearY = isDown
@@ -733,6 +815,7 @@ class GameController extends ChangeNotifier {
     if (gameState != GameState.playing) return;
     final newLevel = levelFromScore(score);
     if (newLevel > level) {
+      _hapticMedium();
       final oldBase = 0.28 + level * 0.035;
       final newBase = 0.28 + newLevel * 0.035;
       level = newLevel;
@@ -748,6 +831,128 @@ class GameController extends ChangeNotifier {
 
       _addPopup(gameWidth / 2, hudBottom + 30, 'LEVEL $level',
           const Color(0xFFFBBF24), size: 28);
+    }
+  }
+
+  // ---- Combination area ----
+  ComboArea _generateComboArea() {
+    final colors = conveyors.map((c) => c.color).toList();
+    final recipe = List.generate(
+        GameConfig.comboSlotCount, (_) => colors[_random.nextInt(colors.length)]);
+    final reward = SpecialType.values[_random.nextInt(SpecialType.values.length)];
+    return ComboArea(recipe: recipe, reward: reward);
+  }
+
+  // Called after every correct gate hit to try to advance the combo sequence.
+  // A hit that matches recipe[progress] advances; one that doesn't resets
+  // progress to 0 (only if the player had already started the sequence).
+  void _advanceCombo(BoxColor scored, double now) {
+    final area = comboArea;
+    if (area == null || area.completionTime != null) return;
+    if (area.currentTarget?.id == scored.id) {
+      area.progress++;
+      if (area.isComplete) _completeComboArea(area, now);
+    } else if (area.progress > 0) {
+      area.progress = 0;
+    }
+  }
+
+  void _completeComboArea(ComboArea area, double now) {
+    area.completionTime = now;
+    _hapticMedium();
+    _spawnSpecialBox(area.reward, now);
+    final centerX = gameWidth / 2;
+    const popupY = GameConfig.comboAreaTop + 26;
+    final label = switch (area.reward) {
+      SpecialType.bomb => '💣 BOMB INCOMING!',
+    };
+    _addPopup(centerX, popupY, label, const Color(0xFFFF6600), size: 20);
+  }
+
+  // Spawns a special box at the entry end of a random non-maintenance conveyor.
+  // Writes to _pendingBoxes so this can be called safely from inside the
+  // _moveBoxes loop (direct boxes.add would cause ConcurrentModificationException).
+  void _spawnSpecialBox(SpecialType type, double now) {
+    final available = conveyors.where((c) => !c.maintenance).toList();
+    if (available.isEmpty) return;
+    final conv = available[_random.nextInt(available.length)];
+    final isDown = conv.direction == ConveyorDirection.down;
+    final convH = getCurrentHeight(conv, now);
+    _pendingBoxes.add(Box(
+      id: _boxIdCounter++,
+      x: conv.x + (conv.width - boxSize) / 2,
+      y: isDown ? conv.y - boxSize : conv.y + convH,
+      conveyorId: conv.id,
+      color: conv.color,
+      size: boxSize,
+      onConveyor: true,
+      entering: true,
+      specialType: type,
+    ));
+  }
+
+  void _triggerSpecial(
+      SpecialType type, Conveyor conv, bool isDown, double gateY, double popupY) {
+    switch (type) {
+      case SpecialType.bomb:
+        _triggerBomb(conv, isDown, gateY, popupY);
+    }
+  }
+
+  void _triggerBomb(Conveyor conv, bool isDown, double gateY, double popupY) {
+    // Mark all normal boxes on this conveyor for removal via _pendingRemovals
+    // so we never call boxes.removeWhere inside the _moveBoxes iteration.
+    int count = 0;
+    for (final b in boxes) {
+      if (b.conveyorId == conv.id &&
+          b.id != draggedBoxId &&
+          b.specialType == null) {
+        _pendingRemovals.add(b.id);
+        count++;
+      }
+    }
+    if (count > 0) score += count;
+
+    final cx = conv.x + conv.width / 2;
+    _spawnExplosion(cx, gateY);
+    _shakeUntil = _lastFrameTime + 500;
+    HapticFeedback.heavyImpact();
+
+    final label = count > 0 ? '💥 +$count' : '💥 BOOM!';
+    _addPopup(cx, popupY, label, const Color(0xFFFF6600), size: 28);
+  }
+
+  void _spawnExplosion(double x, double y) {
+    const boom = [
+      Color(0xFFFF6600),
+      Color(0xFFFFCC00),
+      Color(0xFFFF3300),
+      Color(0xFFFFFFFF),
+    ];
+    for (int i = 0; i < 20; i++) {
+      final angle = _random.nextDouble() * 2 * pi;
+      final speed = 0.08 + _random.nextDouble() * 0.38;
+      particles.add(Particle(
+        x: x + (_random.nextDouble() - 0.5) * 10,
+        y: y + (_random.nextDouble() - 0.5) * 10,
+        vx: cos(angle) * speed,
+        vy: sin(angle) * speed,
+        gravity: 0.0004,
+        drag: 0.92,
+        size: 2.5 + _random.nextDouble() * 4.5,
+        color: boom[_random.nextInt(boom.length)],
+        startTime: _lastFrameTime,
+        lifetime: 350 + _random.nextDouble() * 250,
+      ));
+    }
+  }
+
+  // After the completion flash (1 500 ms), generate a fresh recipe.
+  void _checkComboReset(double now) {
+    final area = comboArea;
+    if (area == null || area.completionTime == null) return;
+    if (now - area.completionTime! >= 1500) {
+      comboArea = _generateComboArea();
     }
   }
 
@@ -796,6 +1001,7 @@ class GameController extends ChangeNotifier {
         b.x = pos.dx - b.size / 2;
         b.y = pos.dy - b.size / 2;
         b.trail = [];
+        _hapticLight();
         notifyListeners();
         return;
       }
@@ -878,6 +1084,7 @@ class GameController extends ChangeNotifier {
         final slot = _findFreeSlotIndex(box, targetConv, targetH);
         if (slot != null) {
           _startThrow(box, targetConv, slot, now);
+          _hapticMedium();
           draggedBoxId = null;
           notifyListeners();
           return;
@@ -885,6 +1092,7 @@ class GameController extends ChangeNotifier {
       }
       // Swipe toward an invalid / blocked lane — animate back to source.
       _snapBackToSource(box, now);
+      _hapticHeavy();
       _addPopup(box.x + box.size / 2, box.y - 10, '✗',
           const Color(0xFFEF4444),
           size: 16);
@@ -937,12 +1145,15 @@ class GameController extends ChangeNotifier {
       final slot = _findFreeSlotIndex(box, targetConv, currentH);
       if (slot == null) {
         _snapBackToSource(box, now);
+        _hapticHeavy();
       } else {
         _startThrow(box, targetConv, slot, now);
+        _hapticMedium();
       }
     } else {
       // Released outside any conveyor → animate back to source
       _snapBackToSource(box, now);
+      _hapticHeavy();
     }
 
     draggedBoxId = null;

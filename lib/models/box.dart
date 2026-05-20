@@ -1,5 +1,6 @@
 import 'dart:ui';
 import 'box_color.dart';
+import 'special_type.dart';
 
 /// Visual transform produced by an active [ThrowAnim]. Computing it in
 /// the controller (via `throwPose`) keeps the painter agnostic to the
@@ -87,6 +88,10 @@ class Box {
   // 9999  → exiting  (past last slot, moving freely to the gate)
   int? slotIndex;
 
+  // Non-null for special items spawned by combo completion.
+  // Special boxes skip color-matching and trigger their own gate effect.
+  SpecialType? specialType;
+
   Box({
     required this.id,
     required this.x,
@@ -103,5 +108,6 @@ class Box {
     this.vy,
     this.trail,
     this.throwAnim,
+    this.specialType,
   });
 }
