@@ -1,4 +1,5 @@
 ﻿import 'dart:math';
+import 'dart:typed_data';
 import 'dart:ui' as ui show Image;
 import 'package:flutter/material.dart';
 import '../game/game_config.dart';
@@ -186,12 +187,17 @@ class GamePainter extends CustomPainter {
         allowedTargets != null && !allowedTargets.contains(conv.id);
     final highlightPulse = 0.5 + 0.5 * sin(now * 0.008);
 
-    // 3D perspective: top (far) narrows, bottom (close) is full width
+    // 3D perspective: top (far) narrows, bottom (close) is full width.
+    // Outer belts also lean their tops toward the layout centre (X-axis depth).
     final perspDepth = GameConfig.perspDepth;
     final topRailW = GameConfig.railWidthTop;
     final botRailW = GameConfig.railWidthBottom;
-    final tlX = conv.x + perspDepth;
-    final trX = conv.x + conv.width - perspDepth;
+    final layoutCenterX = GameController.gameWidth / 2;
+    final beltCenterX = conv.x + conv.width / 2;
+    final xLean = (beltCenterX - layoutCenterX) *
+        GameConfig.conveyorPerspectiveXFactor;
+    final tlX = conv.x + perspDepth - xLean;
+    final trX = conv.x + conv.width - perspDepth - xLean;
     final blX = conv.x;
     final brX = conv.x + conv.width;
     final topY = conv.y;
@@ -268,6 +274,20 @@ class GamePainter extends CustomPainter {
     // 24px-period stripes.
     canvas.save();
     canvas.clipPath(bodyPath);
+    // Perspective shear: at topY the texture shifts left by xLean; at botY
+    // no shift. This makes the surface pattern follow the belt lean instead
+    // of being a flat rectangle that leaves uncovered corners on outer belts.
+    canvas.save();
+    if (xLean != 0.0) {
+      final shear = xLean / h;
+      final tx = -xLean * (conv.y + h) / h;
+      canvas.transform(Float64List.fromList([
+        1, 0, 0, 0,
+        shear, 1, 0, 0,
+        0, 0, 1, 0,
+        tx, 0, 0, 1,
+      ]));
+    }
     if (convImg != null) {
       final tileH = conv.width * (convImg.height / convImg.width);
       final scroll = conv.maintenance ? 0.0 : (offset % tileH);
@@ -291,6 +311,7 @@ class GamePainter extends CustomPainter {
         canvas.drawRRect(stripeRect, stripePaint);
       }
     }
+    canvas.restore();
 
     // Resize flash overlay
     if (conv.resizing) {
@@ -326,39 +347,56 @@ class GamePainter extends CustomPainter {
       _drawDiagonalStripes(canvas, Rect.fromLTWH(conv.x, conv.y, conv.width, h),
           opacity: 0.35 + flash * 0.35);
 
-      // Center label
-      final labelHeight = min(160.0, h - 20);
-      final labelTop = conv.y + h / 2 - min(80.0, h / 2 - 10);
+      // The label and text must be centred on the belt's *visual* centre at
+      // mid-height, which shifts by xLean relative to the geometric centre:
+      //   visMidX = conv.x + w/2 − xLean/2   (xLean*(1−t) at t=0.5)
+      //
+      // Maximum safe half-width so the label rectangle stays inside the
+      // trapezoid at its tightest row (the top of the label):
+      //   safeHalf = (w−p)/2 − labelH*(p+|xLean|)/(2h)
+      // where p = perspDepth.  Derived by solving right_x(tTopLabel) −
+      // visMidX ≥ labelW/2 for the outer belt corner constraint.
+      final visMidX = conv.x + conv.width / 2 - xLean / 2;
+      final labelH = min(h - 16.0, 160.0);
+      final safeHalf = (conv.width - perspDepth) / 2 -
+          labelH * (perspDepth + xLean.abs()) / (2 * h);
+      final labelW = (safeHalf * 2 * 0.88).clamp(16.0, 44.0);
+      final labelTop = conv.y + h / 2 - labelH / 2;
       final labelRect = RRect.fromRectAndRadius(
-        Rect.fromLTWH(conv.x + conv.width / 2 - 20, labelTop, 40, labelHeight),
+        Rect.fromLTWH(visMidX - labelW / 2, labelTop, labelW, labelH),
         const Radius.circular(4),
       );
       canvas.drawRRect(
           labelRect, Paint()..color = const Color(0xFF0F172A).withValues(alpha: 0.85));
 
-      if (h > 120) {
-        // "MAINTENANCE" text, rotated 90° counterclockwise
+      if (h > 60) {
+        // fontSize → visual width after rotation; must fit in labelW.
+        // labelH / 7.5 ≈ 88 % fill of visual height with "MAINTENANCE".
+        final fontSize = (labelH / 7.5).clamp(6.0, labelW * 0.75);
         canvas.save();
-        canvas.translate(conv.x + conv.width / 2, conv.y + h / 2);
+        canvas.translate(visMidX, conv.y + h / 2);
         canvas.rotate(-pi / 2);
         _drawText(canvas, 'MAINTENANCE', 0, 0,
             color: const Color(0xFFFBBF24),
-            fontSize: 14,
+            fontSize: fontSize,
             fontWeight: FontWeight.bold,
-            letterSpacing: 2,
+            letterSpacing: 1,
             align: TextAlign.center,
             baselineCenter: true);
         canvas.restore();
       }
 
-      // Pending-direction badges at both ends
+      // Pending-direction badges at both ends — also use visMidX so they
+      // sit on the visible belt centre, not the geometric centre.
       for (final yPos in [conv.y + 20, conv.y + h - 20]) {
+        final badgeT = (yPos - conv.y) / h;
+        final badgeX = conv.x + conv.width / 2 - xLean * (1 - badgeT);
         canvas.drawCircle(
-            Offset(conv.x + conv.width / 2, yPos),
+            Offset(badgeX, yPos),
             10,
             Paint()
               ..color = const Color(0xFF0F172A).withValues(alpha: 0.9));
-        _drawText(canvas, pendingArrow, conv.x + conv.width / 2, yPos,
+        _drawText(canvas, pendingArrow, badgeX, yPos,
             color: const Color(0xFFFBBF24),
             fontSize: 14,
             fontWeight: FontWeight.bold,
@@ -374,7 +412,9 @@ class GamePainter extends CustomPainter {
     if (slots != null && slots.containsKey(conv.id)) {
       final ghostY = slots[conv.id]!;
       const ghostSize = GameController.boxSize;
-      final ghostX = conv.x + (conv.width - ghostSize) / 2;
+      final ghostBeltT = ((ghostY + ghostSize / 2 - conv.y) / h).clamp(0.0, 1.0);
+      final ghostLeanX = -xLean * (1 - ghostBeltT);
+      final ghostX = conv.x + (conv.width - ghostSize) / 2 + ghostLeanX;
       final draggedBox =
           game.boxes.where((b) => b.id == game.draggedBoxId).firstOrNull;
       final fillColor = draggedBox?.color.bg ?? Colors.white;
@@ -490,7 +530,11 @@ class GamePainter extends CustomPainter {
         isDown ? 1.0 : (conv.width - 2 * perspDepth) / conv.width;
     final gateW = (conv.width + 6) * gatePerspScale;
     final gateH = GameConfig.gateSpriteHeight * gatePerspScale;
-    final gateX = conv.x + conv.width / 2 - gateW / 2;
+    // For upward conveyors the gate sits at the top (far) end of the belt, which
+    // is horizontally shifted by xLean — centre on (tlX+trX)/2 not conv.x+w/2.
+    final gateX = isDown
+        ? conv.x + conv.width / 2 - gateW / 2
+        : conv.x + conv.width / 2 - xLean - gateW / 2;
     final scaledGateY =
         isDown ? gateY : conv.y - GameController.gateOffset - gateH;
     final gateRect = Rect.fromLTWH(gateX, scaledGateY, gateW, gateH);
@@ -630,15 +674,21 @@ class GamePainter extends CustomPainter {
       opacity *= pose.opacity;
     }
 
-    // Perspective scale: boxes near the top (far) appear smaller
+    // Perspective scale + lean: boxes near the top (far) appear smaller and
+    // are shifted horizontally to match the belt shear applied to the texture.
     double perspScale = 1.0;
+    double leanX = 0.0;
     if (!isDragged && !isThrown && conv != null) {
       final convH = game.getCurrentHeight(conv, game.currentTime);
-      final beltT = ((box.y + box.size / 2 - conv.y) / convH).clamp(0.0, 1.0);
+      final boxCenterY = box.y + box.size / 2;
+      final beltT = ((boxCenterY - conv.y) / convH).clamp(0.0, 1.0);
       perspScale = (conv.width - 2 * GameConfig.perspDepth * (1 - beltT)) / conv.width;
+      final xLean = (conv.x + conv.width / 2 - GameController.gameWidth / 2) *
+          GameConfig.conveyorPerspectiveXFactor;
+      leanX = -xLean * (1 - beltT); // 0 at bottom rail, -xLean at top rail
     }
 
-    final cx = box.x + box.size / 2;
+    final cx = box.x + leanX + box.size / 2;
     final cy = box.y + box.size / 2 + liftY;
 
     // Floor shadow — stays at unlifted Y so the lift reads as height.
@@ -711,10 +761,10 @@ class GamePainter extends CustomPainter {
       _drawSprite(
           canvas,
           boxImg,
-          Rect.fromLTWH(box.x, box.y, box.size, box.size),
+          Rect.fromLTWH(box.x + leanX, box.y, box.size, box.size),
           opacity: opacity);
     } else {
-      _drawProceduralBox(canvas, box, opacity);
+      _drawProceduralBox(canvas, box, opacity, xOffset: leanX);
     }
     canvas.restore();
 
@@ -743,32 +793,34 @@ class GamePainter extends CustomPainter {
       )..layout();
       tp.paint(
         canvas,
-        Offset(box.x + (box.size - tp.width) / 2, box.y + (box.size - tp.height) / 2),
+        Offset(box.x + leanX + (box.size - tp.width) / 2, box.y + (box.size - tp.height) / 2),
       );
     }
   }
 
-  void _drawProceduralBox(Canvas canvas, Box box, double opacity) {
+  void _drawProceduralBox(Canvas canvas, Box box, double opacity,
+      {double xOffset = 0.0}) {
+    final x = box.x + xOffset;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(box.x, box.y, box.size, box.size),
+          Rect.fromLTWH(x, box.y, box.size, box.size),
           const Radius.circular(6)),
       Paint()..color = box.color.dark.withValues(alpha: opacity),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(box.x + 2, box.y + 2, box.size - 4, box.size - 4),
+          Rect.fromLTWH(x + 2, box.y + 2, box.size - 4, box.size - 4),
           const Radius.circular(5)),
       Paint()..color = box.color.bg.withValues(alpha: opacity),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(box.x + 4, box.y + 4, box.size - 8, 6),
+          Rect.fromLTWH(x + 4, box.y + 4, box.size - 8, 6),
           const Radius.circular(3)),
       Paint()..color = box.color.light.withValues(alpha: opacity * 0.7),
     );
     canvas.drawCircle(
-      Offset(box.x + box.size / 2, box.y + box.size / 2 + 2),
+      Offset(x + box.size / 2, box.y + box.size / 2 + 2),
       6,
       Paint()..color = box.color.light.withValues(alpha: opacity * 0.9),
     );

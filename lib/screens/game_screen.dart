@@ -125,6 +125,58 @@ class _GameScreenState extends State<GameScreen>
                   },
                 ),
               ),
+              // --- Debug: maintenance toggle per conveyor ---
+              Positioned(
+                bottom: 8,
+                left: 8,
+                child: AnimatedBuilder(
+                  animation: _game,
+                  builder: (context, _) {
+                    if (!_game.debugSlots) return const SizedBox.shrink();
+                    return Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (int i = 0; i < _game.conveyors.length; i++)
+                          GestureDetector(
+                            onTap: () => _game.debugToggleMaintenance(
+                                _game.conveyors[i].id),
+                            behavior: HitTestBehavior.opaque,
+                            child: Container(
+                              width: 28,
+                              height: 28,
+                              margin: const EdgeInsets.only(right: 4),
+                              decoration: BoxDecoration(
+                                color: _game.conveyors[i].maintenance
+                                    ? const Color(0xFFFBBF24)
+                                        .withValues(alpha: 0.25)
+                                    : const Color(0xFF1E293B),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: _game.conveyors[i].maintenance
+                                      ? const Color(0xFFFBBF24)
+                                      : const Color(0xFF475569),
+                                  width: 1,
+                                ),
+                              ),
+                              child: Center(
+                                child: Text(
+                                  'M${i + 1}',
+                                  style: TextStyle(
+                                    color: _game.conveyors[i].maintenance
+                                        ? const Color(0xFFFBBF24)
+                                        : const Color(0xFF475569),
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    );
+                  },
+                ),
+              ),
               // --- Debug: stop conveyors (visible only when debug is on) ---
               Positioned(
                 bottom: 8,

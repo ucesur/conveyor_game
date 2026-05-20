@@ -69,6 +69,26 @@ class GameController extends ChangeNotifier {
     if (debugPaused) _debugFreezeTime = _lastFrameTime;
     notifyListeners();
   }
+
+  void debugToggleMaintenance(int conveyorId) {
+    final conv = _findConveyor(conveyorId);
+    if (conv == null) return;
+    if (conv.maintenance) {
+      conv.direction = conv.pendingDirection ?? conv.direction;
+      conv.maintenance = false;
+      conv.pendingDirection = null;
+      conv.maintenanceEnd = 0;
+    } else {
+      conv.pendingDirection = conv.direction == ConveyorDirection.down
+          ? ConveyorDirection.up
+          : ConveyorDirection.down;
+      conv.maintenance = true;
+      // Use maxFinite so _endMaintenance timer never fires; only toggled off manually.
+      conv.maintenanceEnd = double.maxFinite;
+      boxes.removeWhere((b) => b.conveyorId == conv.id && b.id != draggedBoxId);
+    }
+    notifyListeners();
+  }
   List<Box> boxes = [];
   List<Conveyor> conveyors = [];
   List<FallingBox> fallingBoxes = [];

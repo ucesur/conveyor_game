@@ -38,6 +38,12 @@ class GameConfig {
   static const double railWidthTop = 1.0;
   static const double railWidthBottom = 5.5;
 
+  // ── Conveyor layout perspective ──────────────────────────────────────────
+  // Top of each belt leans toward the layout centre by
+  //   (beltCenterX − layoutCenterX) × factor  pixels.
+  // 0 = no lean; 0.15 ≈ 20 px for the outermost belt (132 px from centre).
+  static const double conveyorPerspectiveXFactor = 0.15;
+
   // ── Box spawn frequency ──────────────────────────────────────────────────
   // Interval between spawns on a single belt at level 1 (ms).
   // Shrinks by 200 ms per level, bottoms out at spawnIntervalMin.
