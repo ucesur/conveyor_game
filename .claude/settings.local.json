@@ -13,7 +13,9 @@
       "Bash(/e/SDKs/flutter/bin/flutter run *)",
       "PowerShell(Stop-Process *)",
       "Bash(dir E:\\\\Projects\\\\conveyorgame\\\\assets *)",
-      "PowerShell(Get-ChildItem \"E:\\\\Projects\\\\conveyorgame\\\\assets\" -Recurse -File | ForEach-Object { $_.FullName })"
+      "PowerShell(Get-ChildItem \"E:\\\\Projects\\\\conveyorgame\\\\assets\" -Recurse -File | ForEach-Object { $_.FullName })",
+      "Read(//mnt/e/Projects/**)",
+      "Bash(flutter run *)"
     ]
   }
 }

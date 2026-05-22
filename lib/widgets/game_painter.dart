@@ -54,12 +54,13 @@ class GamePainter extends CustomPainter {
   // show a check mark until the next recipe generates (1 500 ms).
   void _drawComboArea(Canvas canvas, double now) {
     final area = game.comboArea!;
-    final gw = GameController.gameWidth;
+    final gw = GameConfig.comboAreaWidth;
     final panelY = GameConfig.comboAreaTop;
     final panelH = GameConfig.comboAreaHeight;
     final boxSz = GameConfig.comboRecipeBoxSize;
     final spacer = GameConfig.comboRecipeSpacer;
-    final startX = GameConfig.comboRecipeStartX;
+    final panelX = (GameController.gameWidth - gw) / 2;
+    final startX = panelX + 20;
 
     final isComplete = area.completionTime != null;
     final completePulse = isComplete
@@ -73,12 +74,12 @@ class GamePainter extends CustomPainter {
         GameConfig.comboSlotCount * boxSz +
         (GameConfig.comboSlotCount - 1) * spacer;
     final sepX = recipeRight + 12.0;
-    final rewardCenterX = (sepX + gw - 4) / 2;
+    final rewardCenterX = (sepX + gw + panelX - 4) / 2;
     final rewardCenterY = panelY + panelH / 2;
 
     // Panel background
     final panelRRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(4, panelY, gw - 8, panelH),
+      Rect.fromLTWH(panelX, panelY, gw - 8, panelH),
       const Radius.circular(8),
     );
     canvas.drawRRect(panelRRect, Paint()..color = const Color(0xFF0F172A));
@@ -529,8 +530,8 @@ class GamePainter extends CustomPainter {
     canvas.restore();
 
     // Ghost drop target — drawn on top of the belt surface, clipped to belt body.
-    // Applies the same perspective scale + xLean as real boxes so the ghost
-    // shrinks toward the far end of the belt instead of staying full-size.
+    // Uses the same shear transform as the belt texture so the ghost leans with
+    // non-centre belts instead of remaining a vertical rectangle.
     final slots = game.landingSlots;
     if (slots != null && slots.containsKey(conv.id)) {
       final ghostY = slots[conv.id]!;
@@ -539,12 +540,11 @@ class GamePainter extends CustomPainter {
           ((ghostY + ghostSize / 2 - conv.y) / h).clamp(0.0, 1.0);
       final ghostPerspScale =
           (conv.width - 2 * perspDepth * (1 - ghostBeltT)) / conv.width;
-      final ghostLeanX = -xLean * (1 - ghostBeltT);
       final ghostVisualSize = ghostSize * ghostPerspScale;
-      // Centre X follows the belt lean; Y anchors to the same visual centre as
-      // a real box sitting in this slot (scale inward from the centre).
-      final ghostDrawX =
-          conv.x + conv.width / 2 + ghostLeanX - ghostVisualSize / 2;
+      // Centre X: place the ghost at the belt's horizontal centre; the belt
+      // shear transform (applied below) moves it to follow the lean so top and
+      // bottom edges track the belt edges instead of staying vertical.
+      final ghostDrawX = conv.x + conv.width / 2 - ghostVisualSize / 2;
       final ghostDrawY = ghostY + ghostSize / 2 * (1 - ghostPerspScale);
       final draggedBox =
           game.boxes.where((b) => b.id == game.draggedBoxId).firstOrNull;
@@ -552,16 +552,27 @@ class GamePainter extends CustomPainter {
       final borderColor = draggedBox?.color.light ?? Colors.white;
       final pulse = 0.65 + 0.35 * sin(now * 0.006);
 
+      // Draw fill + outline inside one save/restore so both receive the same
+      // shear and clip.  The shear is identical to the belt-texture shear:
+      // at topY the ghost shifts left by xLean; at botY no shift.
       canvas.save();
       canvas.clipPath(bodyPath);
+      if (xLean != 0.0) {
+        final shear = xLean / h;
+        final tx = -xLean * (conv.y + h) / h;
+        canvas.transform(Float64List.fromList([
+          1, 0, 0, 0,
+          shear, 1, 0, 0,
+          0, 0, 1, 0,
+          tx, 0, 0, 1,
+        ]));
+      }
       canvas.drawRRect(
         RRect.fromRectAndRadius(
             Rect.fromLTWH(ghostDrawX, ghostDrawY, ghostVisualSize, ghostVisualSize),
             const Radius.circular(6)),
         Paint()..color = fillColor.withValues(alpha: 0.45 * pulse),
       );
-      canvas.restore();
-
       _drawDashedRRect(
         canvas,
         RRect.fromRectAndRadius(
@@ -571,6 +582,7 @@ class GamePainter extends CustomPainter {
         2.0,
         0.9 * pulse,
       );
+      canvas.restore();
     }
 
     // Left + right rails with state-dependent color
@@ -607,6 +619,16 @@ class GamePainter extends CustomPainter {
     if (game.debugSlots) {
       canvas.save();
       canvas.clipPath(bodyPath);
+      if (xLean != 0.0) {
+        final shear = xLean / h;
+        final tx = -xLean * (conv.y + h) / h;
+        canvas.transform(Float64List.fromList([
+          1, 0, 0, 0,
+          shear, 1, 0, 0,
+          0, 0, 1, 0,
+          tx, 0, 0, 1,
+        ]));
+      }
       final scroll = conv.maintenance ? 0.0 : (offset % GameController.boxSize);
       final nVisible = (h / GameController.boxSize).ceil() + 2;
       final slotBorder = Paint()

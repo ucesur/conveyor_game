@@ -12,7 +12,7 @@ class GameConfig {
   static const double hudBottom = 114.0;
 
   // ── Box ──────────────────────────────────────────────────────────────────
-  static const double boxSize = 50.0;
+  static const double boxSize = 40.0;
 
   // ── Conveyor ─────────────────────────────────────────────────────────────
   static const double conveyorWidth = 52.0;
@@ -57,10 +57,10 @@ class GameConfig {
   // Panel sits between the progress bar (y≈64) and the generator/conveyor zone.
   static const double comboAreaTop = 80.0;
   static const double comboAreaHeight = 66.0;
+  static const double comboAreaWidth = 220.0;
   // Recipe display: comboSlotCount colored boxes with arrows between them.
   static const int comboSlotCount = 2;
   static const double comboRecipeBoxSize = 38.0;
-  static const double comboRecipeStartX = 12.0;
   // Space between adjacent recipe boxes (includes the ▶ arrow glyph).
   static const double comboRecipeSpacer = 20.0;
 

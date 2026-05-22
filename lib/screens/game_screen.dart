@@ -19,15 +19,23 @@ class _GameScreenState extends State<GameScreen>
   late final Ticker _ticker;
   bool _ready = false;
 
+  final _fps = ValueNotifier<int>(0);
+  int _frameCount = 0;
+  double _lastFpsTime = 0;
+
   @override
   void initState() {
     super.initState();
     _game = GameController();
-    // Drives the game update each frame — elapsed is in microseconds, we
-    // convert to milliseconds to match the React `performance.now()` units.
     _ticker = createTicker((elapsed) {
       final ms = elapsed.inMicroseconds / 1000.0;
       _game.update(ms);
+      _frameCount++;
+      if (ms - _lastFpsTime >= 1000.0) {
+        _fps.value = _frameCount;
+        _frameCount = 0;
+        _lastFpsTime = ms;
+      }
     });
     // Don't start the ticker until assets are decoded — otherwise the
     // first frame paints with the procedural fallback and pops to sprites
@@ -47,6 +55,7 @@ class _GameScreenState extends State<GameScreen>
   void dispose() {
     _ticker.dispose();
     _game.dispose();
+    _fps.dispose();
     super.dispose();
   }
 
@@ -253,6 +262,42 @@ class _GameScreenState extends State<GameScreen>
                               ? const Color(0xFFFF6600)
                               : const Color(0xFF475569),
                           size: 18,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              // --- FPS counter (above debug toggle, visible only in debug) ---
+              Positioned(
+                bottom: 48,
+                right: 8,
+                child: AnimatedBuilder(
+                  animation: _game,
+                  builder: (context, _) {
+                    if (!_game.debugSlots) return const SizedBox.shrink();
+                    return ValueListenableBuilder<int>(
+                      valueListenable: _fps,
+                      builder: (context, fps, _) => Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F172A),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                              color: const Color(0xFF475569), width: 1),
+                        ),
+                        child: Text(
+                          '$fps fps',
+                          style: TextStyle(
+                            color: fps >= 55
+                                ? const Color(0xFF22C55E)
+                                : fps >= 30
+                                    ? const Color(0xFFFBBF24)
+                                    : const Color(0xFFF87171),
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
                     );
