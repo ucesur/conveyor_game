@@ -18,6 +18,7 @@ class _GameScreenState extends State<GameScreen>
   late final GameController _game;
   late final Ticker _ticker;
   bool _ready = false;
+  bool _showSettings = false;
 
   final _fps = ValueNotifier<int>(0);
   int _frameCount = 0;
@@ -275,7 +276,6 @@ class _GameScreenState extends State<GameScreen>
                 child: AnimatedBuilder(
                   animation: _game,
                   builder: (context, _) {
-                    if (!_game.debugSlots) return const SizedBox.shrink();
                     return ValueListenableBuilder<int>(
                       valueListenable: _fps,
                       builder: (context, fps, _) => Container(
@@ -351,11 +351,13 @@ class _GameScreenState extends State<GameScreen>
                     if (_game.gameState == GameState.menu) {
                       return _MenuOverlay(
                           onStart: _game.startGame,
+                          onSettings: () => setState(() => _showSettings = true),
                           highScore: _game.highScore);
                     } else if (_game.gameState == GameState.paused) {
                       return _PausedOverlay(
                           onResume: _game.resumeGame,
-                          onMenu: _game.exitToMenu);
+                          onMenu: _game.exitToMenu,
+                          onSettings: () => setState(() => _showSettings = true));
                     } else if (_game.gameState == GameState.gameover) {
                       return _GameOverOverlay(
                           score: _game.score,
@@ -367,6 +369,14 @@ class _GameScreenState extends State<GameScreen>
                   },
                 ),
               ),
+              // --- Settings overlay (covers everything, driven by widget state) ---
+              if (_showSettings)
+                Positioned.fill(
+                  child: _SettingsOverlay(
+                    game: _game,
+                    onClose: () => setState(() => _showSettings = false),
+                  ),
+                ),
             ],
           );
         }),
@@ -411,7 +421,11 @@ class _PauseButton extends StatelessWidget {
 class _PausedOverlay extends StatelessWidget {
   final VoidCallback onResume;
   final VoidCallback onMenu;
-  const _PausedOverlay({required this.onResume, required this.onMenu});
+  final VoidCallback onSettings;
+  const _PausedOverlay(
+      {required this.onResume,
+      required this.onMenu,
+      required this.onSettings});
 
   @override
   Widget build(BuildContext context) {
@@ -430,6 +444,18 @@ class _PausedOverlay extends StatelessWidget {
           const SizedBox(height: 32),
           _YellowButton(label: 'RESUME', onPressed: onResume),
           const SizedBox(height: 16),
+          GestureDetector(
+            onTap: onSettings,
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Text('SETTINGS',
+                  style: TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 2)),
+            ),
+          ),
           GestureDetector(
             onTap: onMenu,
             child: const Padding(
@@ -451,73 +477,102 @@ class _PausedOverlay extends StatelessWidget {
 // -------------------- Menu overlay --------------------
 class _MenuOverlay extends StatelessWidget {
   final VoidCallback onStart;
+  final VoidCallback onSettings;
   final int highScore;
-  const _MenuOverlay({required this.onStart, required this.highScore});
+  const _MenuOverlay(
+      {required this.onStart,
+      required this.onSettings,
+      required this.highScore});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFF0F172A).withValues(alpha: 0.9),
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Text('CONVEYOR',
-              style: TextStyle(
-                  color: Color(0xFFFBBF24),
-                  fontSize: 38,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          const Text('MATCH',
-              style: TextStyle(
-                  color: Color(0xFFFBBF24),
-                  fontSize: 38,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(height: 24),
-          const Text(
-            'Drag boxes to a NEIGHBOR\nconveyor of the matching color.\nBoxes can only hop one lane!',
-            textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 14, height: 1.5),
-          ),
-          const SizedBox(height: 24),
-          Row(
+    return Stack(
+      children: [
+        Container(
+          color: const Color(0xFF0F172A).withValues(alpha: 0.9),
+          padding: const EdgeInsets.all(24),
+          child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              for (final c in BoxColor.all.take(3))
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Container(
-                    width: 40,
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: c.bg,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: c.dark, width: 2),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.4),
-                          blurRadius: 6,
-                          offset: const Offset(0, 3),
+              const Text('CONVEYOR',
+                  style: TextStyle(
+                      color: Color(0xFFFBBF24),
+                      fontSize: 38,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              const Text('MATCH',
+                  style: TextStyle(
+                      color: Color(0xFFFBBF24),
+                      fontSize: 38,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 24),
+              const Text(
+                'Drag boxes to a NEIGHBOR\nconveyor of the matching color.\nBoxes can only hop one lane!',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Color(0xFFCBD5E1), fontSize: 14, height: 1.5),
+              ),
+              const SizedBox(height: 24),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  for (final c in BoxColor.all.take(3))
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: c.bg,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: c.dark, width: 2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.4),
+                              blurRadius: 6,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  ),
+                ],
+              ),
+              const SizedBox(height: 32),
+              if (highScore > 0)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: Text('High Score: $highScore',
+                      style: const TextStyle(
+                          color: Color(0xFFFBBF24),
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold)),
                 ),
+              _YellowButton(label: 'START', onPressed: onStart),
             ],
           ),
-          const SizedBox(height: 32),
-          if (highScore > 0)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Text('High Score: $highScore',
-                  style: const TextStyle(
-                      color: Color(0xFFFBBF24),
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold)),
+        ),
+        // Gear button — top-right corner
+        Positioned(
+          top: 12,
+          right: 12,
+          child: GestureDetector(
+            onTap: onSettings,
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFF475569)),
+              ),
+              child: const Icon(Icons.settings,
+                  color: Color(0xFF94A3B8), size: 20),
             ),
-          _YellowButton(label: 'START', onPressed: onStart),
-        ],
-      ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -578,6 +633,285 @@ class _GameOverOverlay extends StatelessWidget {
           const SizedBox(height: 8),
           _YellowButton(label: 'PLAY AGAIN', onPressed: onRestart),
         ],
+      ),
+    );
+  }
+}
+
+// -------------------- Settings overlay --------------------
+class _SettingsOverlay extends StatefulWidget {
+  final GameController game;
+  final VoidCallback onClose;
+  const _SettingsOverlay({required this.game, required this.onClose});
+
+  @override
+  State<_SettingsOverlay> createState() => _SettingsOverlayState();
+}
+
+class _SettingsOverlayState extends State<_SettingsOverlay> {
+  bool _confirmReset = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFF0F172A).withValues(alpha: 0.97),
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'SETTINGS',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                color: Color(0xFFFBBF24),
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 3),
+          ),
+          const SizedBox(height: 36),
+          // Haptics toggle
+          _SettingsRow(
+            label: 'Haptics',
+            icon: widget.game.hapticsEnabled
+                ? Icons.vibration
+                : Icons.phone_android,
+            value: widget.game.hapticsEnabled,
+            onToggle: () {
+              widget.game.toggleHaptics();
+              setState(() {});
+            },
+          ),
+          const SizedBox(height: 16),
+          // High score reset
+          _buildResetRow(),
+          const SizedBox(height: 40),
+          GestureDetector(
+            onTap: () {
+              setState(() => _confirmReset = false);
+              widget.onClose();
+            },
+            child: const Padding(
+              padding: EdgeInsets.symmetric(vertical: 10),
+              child: Text(
+                'BACK',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 2),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResetRow() {
+    if (widget.game.highScore == 0) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFF334155)),
+        ),
+        child: const Text(
+          'No high score yet',
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Color(0xFF475569), fontSize: 14),
+        ),
+      );
+    }
+
+    if (!_confirmReset) {
+      return GestureDetector(
+        onTap: () => setState(() => _confirmReset = true),
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF1E293B),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: const Color(0xFF475569)),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('High Score',
+                  style:
+                      TextStyle(color: Color(0xFFCBD5E1), fontSize: 15)),
+              Row(
+                children: [
+                  Text(
+                    '${widget.game.highScore}',
+                    style: const TextStyle(
+                        color: Color(0xFFFBBF24),
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 12),
+                  const Text('RESET',
+                      style: TextStyle(
+                          color: Color(0xFFEF4444),
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1)),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Confirmation
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFEF4444)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Reset high score?',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: () {
+                    widget.game.resetHighScore();
+                    setState(() => _confirmReset = false);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(
+                      color:
+                          const Color(0xFFEF4444).withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(6),
+                      border:
+                          Border.all(color: const Color(0xFFEF4444)),
+                    ),
+                    child: const Text('YES',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: Color(0xFFEF4444),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() => _confirmReset = false),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F172A),
+                      borderRadius: BorderRadius.circular(6),
+                      border:
+                          Border.all(color: const Color(0xFF475569)),
+                    ),
+                    child: const Text('NO',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            color: Color(0xFFCBD5E1),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// -------------------- Settings row (toggle) --------------------
+class _SettingsRow extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool value;
+  final VoidCallback onToggle;
+  const _SettingsRow(
+      {required this.label,
+      required this.icon,
+      required this.value,
+      required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    final activeColor = const Color(0xFF22C55E);
+    final inactiveColor = const Color(0xFF475569);
+    return GestureDetector(
+      onTap: onToggle,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+              color: value ? activeColor : const Color(0xFF475569)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Icon(icon,
+                    color: value ? activeColor : const Color(0xFF94A3B8),
+                    size: 20),
+                const SizedBox(width: 12),
+                Text(label,
+                    style: const TextStyle(
+                        color: Color(0xFFCBD5E1), fontSize: 15)),
+              ],
+            ),
+            // Animated pill toggle
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: 44,
+              height: 24,
+              decoration: BoxDecoration(
+                color: value
+                    ? activeColor.withValues(alpha: 0.25)
+                    : const Color(0xFF0F172A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: value ? activeColor : inactiveColor),
+              ),
+              child: AnimatedAlign(
+                duration: const Duration(milliseconds: 150),
+                alignment:
+                    value ? Alignment.centerRight : Alignment.centerLeft,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: Container(
+                    width: 18,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: value ? activeColor : inactiveColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

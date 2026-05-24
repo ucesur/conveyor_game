@@ -2,4 +2,5 @@
 /// Add new values here as more assets are added to assets/boxes/specials/.
 enum SpecialType {
   bomb,
+  icy,
 }

@@ -6,6 +6,7 @@ import '../models/box_color.dart';
 import '../models/conveyor.dart';
 import '../models/falling_box.dart';
 import '../models/particle.dart';
+import '../models/belt_explosion.dart';
 import '../models/combo_area.dart';
 import '../models/popup.dart';
 import '../models/special_type.dart';
@@ -22,6 +23,8 @@ class GameController extends ChangeNotifier {
   static const double maintenanceDuration = 2200;
   static const double reverseCheckInterval = 12000;
   static const double reverseChance = 0.25;
+
+  static const double icyFreezeDuration = 4000;
 
   static const double resizeCheckInterval = 6500;
   static const double resizeChance = 0.35;
@@ -80,6 +83,11 @@ class GameController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void resetHighScore() {
+    highScore = 0;
+    notifyListeners();
+  }
+
   void _hapticLight() {
     if (hapticsEnabled) HapticFeedback.lightImpact();
   }
@@ -117,6 +125,7 @@ class GameController extends ChangeNotifier {
   List<Box> boxes = [];
   List<Conveyor> conveyors = [];
   List<FallingBox> fallingBoxes = [];
+  List<BeltExplosion> beltExplosions = [];
   ComboArea? comboArea;
   int? draggedBoxId;
   List<Popup> popups = [];
@@ -342,6 +351,7 @@ class GameController extends ChangeNotifier {
     popups = [];
     particles = [];
     fallingBoxes = [];
+    beltExplosions = [];
     draggedBoxId = null;
     comboArea = null;
     _pauseStart = 0;
@@ -376,6 +386,7 @@ class GameController extends ChangeNotifier {
     _pauseStart = 0;
     boxes = [];
     fallingBoxes = [];
+    beltExplosions = [];
     popups = [];
     particles = [];
     comboArea = null;
@@ -395,6 +406,7 @@ class GameController extends ChangeNotifier {
     for (final conv in conveyors) {
       if (conv.maintenance) conv.maintenanceEnd += delta;
       if (conv.resizing) conv.resizeStart += delta;
+      if (conv.frozen) conv.frozenUntil += delta;
     }
     for (final box in boxes) {
       if (box.dragStartTime != null) {
@@ -409,6 +421,9 @@ class GameController extends ChangeNotifier {
     }
     for (final particle in particles) {
       particle.startTime += delta;
+    }
+    for (final e in beltExplosions) {
+      e.startTime += delta;
     }
     final ct = comboArea?.completionTime;
     if (ct != null) comboArea!.completionTime = ct + delta;
@@ -459,6 +474,7 @@ class GameController extends ChangeNotifier {
       _resolveOverlaps(boxes, now);
       _updateParticles(now, dt);
       _updateFallingBoxes(dt);
+      _updateBeltExplosions(now);
       notifyListeners();
       return;
     }
@@ -467,6 +483,7 @@ class GameController extends ChangeNotifier {
     _handleResizes(now);
     _endMaintenance(now);
     _endResize(now);
+    _endFreeze(now);
     _updateThrows(now);
     _updateParticles(now, dt);
     _updateFallingBoxes(dt);
@@ -474,6 +491,7 @@ class GameController extends ChangeNotifier {
     _moveBoxes(now, dt);
     _checkLevelUp(now);
     _checkComboReset(now);
+    _updateBeltExplosions(now);
 
     notifyListeners();
   }
@@ -484,7 +502,7 @@ class GameController extends ChangeNotifier {
     if (conveyors.length <= 1 || _random.nextDouble() >= reverseChance) return;
 
     final candidates = conveyors
-        .where((c) => !c.maintenance && !c.resizing)
+        .where((c) => !c.maintenance && !c.resizing && !c.frozen)
         .toList();
 
     if (candidates.isEmpty) return;
@@ -514,7 +532,7 @@ class GameController extends ChangeNotifier {
     if (conveyors.isEmpty || _random.nextDouble() >= resizeChance) return;
 
     final candidates =
-        conveyors.where((c) => !c.maintenance && !c.resizing).toList();
+        conveyors.where((c) => !c.maintenance && !c.resizing && !c.frozen).toList();
     if (candidates.isEmpty) return;
 
     final target = candidates[_random.nextInt(candidates.length)];
@@ -565,6 +583,15 @@ class GameController extends ChangeNotifier {
     }
   }
 
+  void _endFreeze(double now) {
+    for (final conv in conveyors) {
+      if (conv.frozen && now >= conv.frozenUntil) {
+        conv.frozen = false;
+        conv.frozenUntil = 0;
+      }
+    }
+  }
+
   double _spawnInterval() {
     final base = max(GameConfig.spawnIntervalMin,
         GameConfig.spawnIntervalBase - (level - 1) * 200.0);
@@ -580,7 +607,7 @@ class GameController extends ChangeNotifier {
     const bsize = GameController.boxSize;
 
     for (final conv in conveyors) {
-      if (conv.maintenance) continue;
+      if (conv.maintenance || conv.frozen) continue;
       if (now < (_nextSpawnTime[conv.id] ?? 0)) continue;
 
       final isDown = conv.direction == ConveyorDirection.down;
@@ -618,7 +645,7 @@ class GameController extends ChangeNotifier {
 
       final conv = _findConveyor(box.conveyorId);
       if (conv == null) { keep.add(box); continue; }
-      if (conv.maintenance) { keep.add(box); continue; }
+      if (conv.maintenance || conv.frozen) { keep.add(box); continue; }
 
       final convH = getCurrentHeight(conv, now);
       final nSlots = _numSlots(convH);
@@ -865,6 +892,7 @@ class GameController extends ChangeNotifier {
     const popupY = GameConfig.comboAreaTop + 26;
     final label = switch (area.reward) {
       SpecialType.bomb => '💣 BOMB INCOMING!',
+      SpecialType.icy => '❄ ICY INCOMING!',
     };
     _addPopup(centerX, popupY, label, const Color(0xFFFF6600), size: 20);
   }
@@ -873,7 +901,7 @@ class GameController extends ChangeNotifier {
   // Writes to _pendingBoxes so this can be called safely from inside the
   // _moveBoxes loop (direct boxes.add would cause ConcurrentModificationException).
   void _spawnSpecialBox(SpecialType type, double now) {
-    final available = conveyors.where((c) => !c.maintenance).toList();
+    final available = conveyors.where((c) => !c.maintenance && !c.frozen).toList();
     if (available.isEmpty) return;
     final conv = available[_random.nextInt(available.length)];
     final isDown = conv.direction == ConveyorDirection.down;
@@ -896,6 +924,8 @@ class GameController extends ChangeNotifier {
     switch (type) {
       case SpecialType.bomb:
         _triggerBomb(conv, isDown, gateY, popupY);
+      case SpecialType.icy:
+        _triggerIcy(conv, isDown, gateY, popupY);
     }
   }
 
@@ -918,8 +948,61 @@ class GameController extends ChangeNotifier {
     _shakeUntil = _lastFrameTime + 500;
     HapticFeedback.heavyImpact();
 
+    // Fire wave: travels from the gate edge to the generator end of the belt.
+    final convH = getCurrentHeight(conv, _lastFrameTime);
+    final toY = isDown ? conv.y : conv.y + convH;
+    final duration = (convH * 1.5).clamp(500.0, 900.0);
+    beltExplosions.removeWhere((e) => e.conveyorId == conv.id);
+    beltExplosions.add(BeltExplosion(
+      conveyorId: conv.id,
+      startTime: _lastFrameTime,
+      duration: duration,
+      fromY: gateY,
+      toY: toY,
+    ));
+
     final label = count > 0 ? '💥 +$count' : '💥 BOOM!';
     _addPopup(cx, popupY, label, const Color(0xFFFF6600), size: 28);
+  }
+
+  void _triggerIcy(Conveyor conv, bool isDown, double gateY, double popupY) {
+    conv.frozen = true;
+    conv.frozenUntil = _lastFrameTime + icyFreezeDuration;
+
+    final cx = conv.x + conv.width / 2;
+    _spawnIceEffect(cx, gateY);
+    HapticFeedback.lightImpact();
+
+    _addPopup(cx, popupY, '❄ FROZEN!', const Color(0xFF7DD3FC), size: 24);
+  }
+
+  void _spawnIceEffect(double x, double y) {
+    const ice = [
+      Color(0xFF7DD3FC),
+      Color(0xFFBAE6FD),
+      Color(0xFFFFFFFF),
+      Color(0xFF0EA5E9),
+    ];
+    for (int i = 0; i < 18; i++) {
+      final angle = _random.nextDouble() * 2 * pi;
+      final speed = 0.03 + _random.nextDouble() * 0.20;
+      particles.add(Particle(
+        x: x + (_random.nextDouble() - 0.5) * 8,
+        y: y + (_random.nextDouble() - 0.5) * 8,
+        vx: cos(angle) * speed,
+        vy: sin(angle) * speed,
+        gravity: 0.00015,
+        drag: 0.94,
+        size: 2.0 + _random.nextDouble() * 3.5,
+        color: ice[_random.nextInt(ice.length)],
+        startTime: _lastFrameTime,
+        lifetime: 450 + _random.nextDouble() * 300,
+      ));
+    }
+  }
+
+  void _updateBeltExplosions(double now) {
+    beltExplosions.removeWhere((e) => now - e.startTime >= e.duration);
   }
 
   void _spawnExplosion(double x, double y) {

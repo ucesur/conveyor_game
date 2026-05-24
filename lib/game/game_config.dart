@@ -10,6 +10,15 @@ class GameConfig {
 
   // ── HUD ──────────────────────────────────────────────────────────────────
   static const double hudBottom = 114.0;
+  // HUD.svg viewBox: 800×195. Rendered at full game width, maintaining aspect ratio.
+  static const double hudSvgW = 800.0;
+  static const double hudSvgH = 195.0;
+  // Derived HUD image height (baseWidth * 195 / 800 = 97.5 at baseWidth=400).
+  static double get hudImageHeight => baseWidth * hudSvgH / hudSvgW;
+  // Named slot positions in HUD SVG coordinates (x, y, width, height).
+  static const double hudScoreX = 14.0,  hudScoreY = 132.0, hudScoreW = 216.0, hudScoreH = 50.0;
+  static const double hudLevelX = 322.0, hudLevelY = 132.0, hudLevelW = 156.0, hudLevelH = 50.0;
+  static const double hudLivesX = 570.0, hudLivesY = 132.0, hudLivesW = 172.0, hudLivesH = 50.0;
 
   // ── Box ──────────────────────────────────────────────────────────────────
   static const double boxSize = 40.0;
@@ -54,15 +63,21 @@ class GameConfig {
   static const double spawnIntervalJitterMax = 1.3;
 
   // ── Combination area ─────────────────────────────────────────────────────
-  // Panel sits between the progress bar (y≈64) and the generator/conveyor zone.
-  static const double comboAreaTop = 80.0;
-  static const double comboAreaHeight = 66.0;
+  // Panel sits between the progress bar and the generator/conveyor zone.
+  // comboAreaTop: after hudImageHeight (97.5) + 4px progress bar + gap.
+  static const double comboAreaTop = 106.0;
+  // comboAreaHeight: (comboAreaWidth-8) * containerSvgH / containerSvgW ≈ 77.
+  static const double comboAreaHeight = 77.0;
   static const double comboAreaWidth = 220.0;
-  // Recipe display: comboSlotCount colored boxes with arrows between them.
+  // Number of recipe slots (drives _generateComboArea).
   static const int comboSlotCount = 2;
-  static const double comboRecipeBoxSize = 38.0;
-  // Space between adjacent recipe boxes (includes the ▶ arrow glyph).
-  static const double comboRecipeSpacer = 20.0;
+  // container.svg viewBox: 800×290. Rendered at comboAreaWidth, maintaining aspect ratio.
+  static const double containerSvgW = 800.0;
+  static const double containerSvgH = 290.0;
+  // Named slot positions in container SVG coordinates (x, y, width, height).
+  static const double containerSlot1X = 78.0,  containerSlot1Y = 75.0, containerSlot1W = 160.0, containerSlot1H = 165.0;
+  static const double containerSlot2X = 282.0, containerSlot2Y = 75.0, containerSlot2W = 160.0, containerSlot2H = 165.0;
+  static const double containerSlot3X = 523.0, containerSlot3Y = 75.0, containerSlot3W = 160.0, containerSlot3H = 165.0;
 
   // ── Generator ────────────────────────────────────────────────────────────
   // Front = isDown belt (spawn end at top).  Back = isUp belt (spawn end at bottom).

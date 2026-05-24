@@ -15,7 +15,8 @@
       "Bash(dir E:\\\\Projects\\\\conveyorgame\\\\assets *)",
       "PowerShell(Get-ChildItem \"E:\\\\Projects\\\\conveyorgame\\\\assets\" -Recurse -File | ForEach-Object { $_.FullName })",
       "Read(//mnt/e/Projects/**)",
-      "Bash(flutter run *)"
+      "Bash(flutter run *)",
+      "Bash(powershell *)"
     ]
   }
 }

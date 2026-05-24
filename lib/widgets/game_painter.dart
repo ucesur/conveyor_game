@@ -1,14 +1,25 @@
 ﻿import 'dart:math';
 import 'dart:typed_data';
-import 'dart:ui' as ui show Image;
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../game/game_config.dart';
 import '../game/game_controller.dart';
 import '../models/box.dart';
 import '../models/conveyor.dart';
+import '../models/belt_explosion.dart';
 import '../models/special_type.dart';
 import '../models/falling_box.dart';
 import '../models/game_assets.dart';
+
+// Cached per-conveyor geometry — body path and shear matrix.
+// Stored outside GamePainter because the painter is rebuilt every frame.
+class _ConvGeom {
+  final double h;
+  final double xLean;
+  final Path bodyPath;
+  final Float64List? shearMatrix; // null when xLean == 0
+  _ConvGeom({required this.h, required this.xLean, required this.bodyPath, this.shearMatrix});
+}
 
 /// Paints the entire game scene onto a fixed 360x600 canvas —
 /// the surrounding [FittedBox] scales it to fit the device viewport.
@@ -16,6 +27,67 @@ class GamePainter extends CustomPainter {
   final GameController game;
 
   GamePainter(this.game) : super(repaint: game);
+
+  // ---- Static resources: survive GamePainter rebuilds each frame ----
+  // GamePainter is recreated every frame (AnimatedBuilder + CustomPaint),
+  // so anything that must persist across frames must be static.
+
+  // General-purpose reusable paints — set properties before each use.
+  // Safe because Canvas.draw* calls are synchronous within paint().
+  static final _p = Paint();
+  static final _sp = Paint()..style = PaintingStyle.stroke;
+
+  // Fixed-color paints that never change between frames.
+  static final _hudBgPaint = Paint()..color = const Color(0xFF0F172A);
+  static final _progressBgPaint = Paint()..color = const Color(0xFF1E293B);
+  static final _progressYellowPaint = Paint()..color = const Color(0xFFFBBF24);
+  static final _liveRedPaint = Paint()..color = const Color(0xFFEF4444);
+  static final _liveDeadPaint = Paint()..color = const Color(0xFF475569);
+  static final _liveStrokePaint = Paint()
+    ..color = const Color(0xFFFCA5A5)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1;
+  static final _beltFallbackPaint = Paint()..color = const Color(0xFF475569);
+  static final _spritePaint = Paint()..filterQuality = FilterQuality.medium;
+
+  // TextPainter cache — layout() is expensive; skip it when nothing changed.
+  // Key encodes all style parameters; capped to avoid unbounded growth.
+  static final _textCache = <String, TextPainter>{};
+  static const _textCacheMax = 128;
+
+  static TextPainter _cachedText({
+    required String text,
+    required Color color,
+    required double fontSize,
+    required FontWeight fontWeight,
+    required TextAlign align,
+    double letterSpacing = 0,
+  }) {
+    final key =
+        '$text\x00${color.a}_${color.r}_${color.g}_${color.b}\x00$fontSize\x00${fontWeight.index}\x00${align.index}\x00$letterSpacing';
+    var tp = _textCache[key];
+    if (tp == null) {
+      if (_textCache.length >= _textCacheMax) _textCache.remove(_textCache.keys.first);
+      tp = TextPainter(
+        text: TextSpan(
+          text: text,
+          style: TextStyle(
+              color: color,
+              fontSize: fontSize,
+              fontWeight: fontWeight,
+              letterSpacing: letterSpacing),
+        ),
+        textAlign: align,
+        textDirection: TextDirection.ltr,
+      )..layout();
+      _textCache[key] = tp;
+    }
+    return tp;
+  }
+
+  // Per-conveyor geometry cache — body path + shear matrix.
+  // Rebuilt only when height or xLean changes (i.e. during resize).
+  static final _convGeomCache = <int, _ConvGeom>{};
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -52,151 +124,135 @@ class GamePainter extends CustomPainter {
   // lighting up completed slots and pulsing the current target slot.
   // When the sequence is complete the panel border flashes and all slots
   // show a check mark until the next recipe generates (1 500 ms).
+  // ---- Combination area ----
+  // Layout driven by container.svg (viewBox 800×290).
+  // slot_1 (SVG 78,75,160,165)  → recipe box 0
+  // slot_2 (SVG 282,75,160,165) → recipe box 1
+  // slot_3 (SVG 486,75,235,165) → reward
   void _drawComboArea(Canvas canvas, double now) {
     final area = game.comboArea!;
-    final gw = GameConfig.comboAreaWidth;
+    final panelX = (GameController.gameWidth - GameConfig.comboAreaWidth) / 2;
     final panelY = GameConfig.comboAreaTop;
-    final panelH = GameConfig.comboAreaHeight;
-    final boxSz = GameConfig.comboRecipeBoxSize;
-    final spacer = GameConfig.comboRecipeSpacer;
-    final panelX = (GameController.gameWidth - gw) / 2;
-    final startX = panelX + 20;
+    final panelW = GameConfig.comboAreaWidth - 8.0;
+    // Height derived from SVG aspect ratio so the container image is undistorted.
+    final panelH = panelW * GameConfig.containerSvgH / GameConfig.containerSvgW;
+    final panelRect = Rect.fromLTWH(panelX, panelY, panelW, panelH);
+    final panelRRect = RRect.fromRectAndRadius(panelRect, const Radius.circular(8));
 
     final isComplete = area.completionTime != null;
     final completePulse = isComplete
         ? (0.5 + 0.5 * sin((now - area.completionTime!) * 0.015)).clamp(0.0, 1.0)
         : 0.0;
 
-    // Vertical center for recipe boxes inside the panel.
-    final boxY = panelY + (panelH - boxSz) / 2;
-    // Right edge of the last recipe box → used to place the separator.
-    final recipeRight = startX +
-        GameConfig.comboSlotCount * boxSz +
-        (GameConfig.comboSlotCount - 1) * spacer;
-    final sepX = recipeRight + 12.0;
-    final rewardCenterX = (sepX + gw + panelX - 4) / 2;
-    final rewardCenterY = panelY + panelH / 2;
+    // SVG → panel coordinate mapping
+    final sx = panelW / GameConfig.containerSvgW;
+    final sy = panelH / GameConfig.containerSvgH;
+    Rect svgSlot(double x, double y, double w, double h) =>
+        Rect.fromLTWH(panelX + x * sx, panelY + y * sy, w * sx, h * sy);
 
-    // Panel background
-    final panelRRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(panelX, panelY, gw - 8, panelH),
-      const Radius.circular(8),
-    );
-    canvas.drawRRect(panelRRect, Paint()..color = const Color(0xFF0F172A));
+    final slot1 = svgSlot(GameConfig.containerSlot1X, GameConfig.containerSlot1Y,
+        GameConfig.containerSlot1W, GameConfig.containerSlot1H);
+    final slot2 = svgSlot(GameConfig.containerSlot2X, GameConfig.containerSlot2Y,
+        GameConfig.containerSlot2W, GameConfig.containerSlot2H);
+    final slot3 = svgSlot(GameConfig.containerSlot3X, GameConfig.containerSlot3Y,
+        GameConfig.containerSlot3W, GameConfig.containerSlot3H);
 
-    // Panel border — pulses gold on completion
-    canvas.drawRRect(
-      panelRRect,
-      Paint()
-        ..color = isComplete
-            ? const Color(0xFFFBBF24).withValues(alpha: 0.6 + completePulse * 0.4)
-            : const Color(0xFF1E3A5F)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = isComplete ? 2.0 : 1.0,
-    );
+    // Container background (image or procedural fallback)
+    final containerImg = GameAssets.instance.containerImage;
+    if (containerImg != null) {
+      _drawSprite(canvas, containerImg, panelRect);
+    } else {
+      canvas.drawRRect(panelRRect, _hudBgPaint);
+      canvas.drawRRect(panelRRect,
+          (_sp..color = const Color(0xFF1E3A5F)..strokeWidth = 1));
+    }
 
-    // Separator
-    canvas.drawLine(
-      Offset(sepX, panelY + 8),
-      Offset(sepX, panelY + panelH - 8),
-      Paint()
-        ..color = const Color(0xFF1E3A5F)
-        ..strokeWidth = 1,
-    );
+    // Gold pulse border on combo completion (always on top of image)
+    if (isComplete) {
+      canvas.drawRRect(panelRRect,
+          (_sp
+            ..color = const Color(0xFFFBBF24)
+                .withValues(alpha: 0.6 + completePulse * 0.4)
+            ..strokeWidth = 2.0));
+    }
 
-    // === Recipe boxes ===
+    // === Recipe boxes in slot_1 and slot_2 ===
+    final slots = [slot1, slot2];
     for (int i = 0; i < area.recipe.length; i++) {
-      final color = area.recipe[i];
-      final boxX = startX + i * (boxSz + spacer);
-      final rect = Rect.fromLTWH(boxX, boxY, boxSz, boxSz);
+      final slot   = slots[i];
+      final color  = area.recipe[i];
       final isDone = i < area.progress || isComplete;
       final isCurrent = !isComplete && i == area.progress;
-      final alpha = isDone || isCurrent ? 1.0 : 0.35;
-      final pulse = isCurrent ? (0.5 + 0.5 * sin(now * 0.008)) : 0.0;
+      final alpha  = isDone || isCurrent ? 1.0 : 0.35;
+      final pulse  = isCurrent ? (0.5 + 0.5 * sin(now * 0.008)) : 0.0;
+      const pad    = 3.0;
+      final boxRect = Rect.fromLTWH(
+          slot.left + pad, slot.top + pad,
+          slot.width - pad * 2, slot.height - pad * 2);
 
-      // Box body — sprite if loaded, procedural fallback otherwise
       final boxImg = GameAssets.instance.boxImage(color);
       if (boxImg != null) {
-        _drawSprite(canvas, boxImg, rect, opacity: alpha);
+        _drawSprite(canvas, boxImg, boxRect, opacity: alpha);
       } else {
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(rect, const Radius.circular(6)),
-          Paint()..color = color.dark.withValues(alpha: alpha),
-        );
+        canvas.drawRRect(RRect.fromRectAndRadius(boxRect, const Radius.circular(6)),
+            (_p..color = color.dark.withValues(alpha: alpha)));
         canvas.drawRRect(
           RRect.fromRectAndRadius(
-            Rect.fromLTWH(boxX + 2, boxY + 2, boxSz - 4, boxSz - 4),
-            const Radius.circular(5),
-          ),
-          Paint()..color = color.bg.withValues(alpha: alpha),
-        );
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromLTWH(boxX + 4, boxY + 4, boxSz - 8, 5),
-            const Radius.circular(3),
-          ),
-          Paint()..color = color.light.withValues(alpha: alpha * 0.6),
+              Rect.fromLTWH(boxRect.left + 2, boxRect.top + 2,
+                  boxRect.width - 4, boxRect.height - 4),
+              const Radius.circular(5)),
+          (_p..color = color.bg.withValues(alpha: alpha)),
         );
       }
 
       // Pulsing outline on the current target slot
       if (isCurrent) {
         canvas.drawRRect(
-          RRect.fromRectAndRadius(rect.inflate(3), const Radius.circular(9)),
-          Paint()
-            ..color = color.light.withValues(alpha: 0.4 + pulse * 0.6)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2,
+          RRect.fromRectAndRadius(boxRect.inflate(3), const Radius.circular(9)),
+          (_sp..color = color.light.withValues(alpha: 0.4 + pulse * 0.6)..strokeWidth = 2),
         );
       }
 
       // Check mark on completed slots
       if (isDone) {
         _drawText(canvas, '✓',
-            boxX + boxSz / 2, boxY + boxSz / 2,
+            slot.center.dx, slot.center.dy,
             color: Colors.white,
-            fontSize: 16,
+            fontSize: slot.height * 0.45,
             fontWeight: FontWeight.bold,
             align: TextAlign.center,
             baselineCenter: true);
       }
     }
 
-    // === Reward section — shows the special item that will be spawned ===
+    // === Reward in slot_3 ===
     final rewardAlpha = isComplete ? (0.7 + completePulse * 0.3) : 1.0;
-    const rewardColor = Color(0xFFFF6600);
-    final specialImg = GameAssets.instance.specialImage(area.reward);
-    final rewardLabel = switch (area.reward) {
-      SpecialType.bomb => 'BOMB!',
+    final rewardFallbackEmoji = switch (area.reward) {
+      SpecialType.bomb => '💣',
+      SpecialType.icy  => '❄',
     };
-    final spriteSize = 32.0;
-    final spriteRect = Rect.fromCenter(
-      center: Offset(rewardCenterX, rewardCenterY - 6),
-      width: spriteSize,
-      height: spriteSize,
-    );
+
+    const pad    = 3.0;
+    final spriteRect = Rect.fromLTWH(
+        slot3.left + pad, slot3.top + pad,
+        slot3.width - pad * 2, slot3.height - pad * 2);
+
+    final specialImg = GameAssets.instance.specialImage(area.reward);
     if (specialImg != null) {
       _drawSprite(canvas, specialImg, spriteRect, opacity: rewardAlpha);
     } else {
-      // Procedural fallback: dark rounded square with bomb emoji
       canvas.drawRRect(
         RRect.fromRectAndRadius(spriteRect, const Radius.circular(6)),
-        Paint()
-          ..color = const Color(0xFF1A1A1A).withValues(alpha: rewardAlpha),
+        (_p..color = const Color(0xFF1A1A1A).withValues(alpha: rewardAlpha)),
       );
-      _drawText(canvas, '💣', rewardCenterX, rewardCenterY - 6,
+      _drawText(canvas, rewardFallbackEmoji,
+          slot3.center.dx, slot3.top + slot3.height * 0.45,
           color: Colors.white.withValues(alpha: rewardAlpha),
-          fontSize: 20,
+          fontSize: slot3.height * 0.38,
           align: TextAlign.center,
           baselineCenter: true);
     }
-    _drawText(canvas, rewardLabel,
-        rewardCenterX, rewardCenterY + spriteSize / 2 + 2,
-        color: rewardColor.withValues(alpha: rewardAlpha),
-        fontSize: 10,
-        fontWeight: FontWeight.bold,
-        align: TextAlign.center,
-        baselineCenter: true);
+
   }
 
   // ---- Background ----
@@ -212,7 +268,8 @@ class GamePainter extends CustomPainter {
     if (bgImg != null) {
       final src = Rect.fromLTWH(
           0, 0, bgImg.width.toDouble(), bgImg.height.toDouble());
-      canvas.drawImageRect(bgImg, src, dst, Paint()..filterQuality = FilterQuality.medium);
+      _spritePaint.colorFilter = null;
+      canvas.drawImageRect(bgImg, src, dst, _spritePaint);
       return;
     }
     if (_bgPaint == null || _bgCachedWidth != w || _bgCachedHeight != h) {
@@ -229,77 +286,86 @@ class GamePainter extends CustomPainter {
   }
 
   // ---- Top HUD: score / level / lives / progress bar ----
+  // Layout driven by HUD.svg (viewBox 800×195). Scale factors:
+  //   sx = gameWidth / 800,  sy = hudH / 195   (both = 0.5 at baseWidth=400)
   void _drawHUD(Canvas canvas) {
-    final bgPaint = Paint()..color = const Color(0xFF0F172A);
-    canvas.drawRect(
-        Rect.fromLTWH(0, 0, GameController.gameWidth, 60), bgPaint);
+    final gw = GameController.gameWidth;
+    final hudH = GameConfig.hudImageHeight; // 97.5 at gameWidth=400
+    final sx = gw / GameConfig.hudSvgW;
+    final sy = hudH / GameConfig.hudSvgH;
 
-    _drawText(canvas, 'SCORE', 15, 28,
-        color: const Color(0xFFFBBF24),
-        fontSize: 14,
-        fontWeight: FontWeight.bold);
-    _drawText(canvas, '${game.score}', 15, 48,
-        color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold);
-
-    _drawText(canvas, 'LEVEL', GameController.gameWidth / 2, 28,
-        color: const Color(0xFFFBBF24),
-        fontSize: 14,
-        fontWeight: FontWeight.bold,
-        align: TextAlign.center);
-    _drawText(canvas, '${game.level}', GameController.gameWidth / 2, 48,
-        color: Colors.white,
-        fontSize: 22,
-        fontWeight: FontWeight.bold,
-        align: TextAlign.center);
-
-    _drawText(canvas, 'LIVES', 345, 28,
-        color: const Color(0xFFFBBF24),
-        fontSize: 14,
-        fontWeight: FontWeight.bold,
-        align: TextAlign.right);
-
-    for (int i = 0; i < 4; i++) {
-      final alive = i < game.lives;
-      final paint = Paint()
-        ..color = alive ? const Color(0xFFEF4444) : const Color(0xFF475569);
-      canvas.drawCircle(Offset(305 + i * 15, 44), 6, paint);
-      if (alive) {
-        final stroke = Paint()
-          ..color = const Color(0xFFFCA5A5)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1;
-        canvas.drawCircle(Offset(305 + i * 15, 44), 6, stroke);
-      }
+    // Background image (or fallback solid rect)
+    final hudImg = GameAssets.instance.hudImage;
+    if (hudImg != null) {
+      _drawSprite(canvas, hudImg, Rect.fromLTWH(0, 0, gw, hudH));
+    } else {
+      canvas.drawRect(Rect.fromLTWH(0, 0, gw, hudH), _hudBgPaint);
     }
 
-    // Progress bar
+    // Helper: center X/Y of an SVG-defined named slot.
+    double slotCX(double svgX, double svgW) => (svgX + svgW / 2) * sx;
+    double slotCY(double svgY, double svgH) => (svgY + svgH / 2) * sy;
+
+    // ── score slot ──────────────────────────────────────────────────────────
+    final sCX = slotCX(GameConfig.hudScoreX, GameConfig.hudScoreW);
+    final sCY = slotCY(GameConfig.hudScoreY, GameConfig.hudScoreH);
+    _drawText(canvas, '${game.score}', sCX, sCY,
+        color: Colors.white,
+        fontSize: GameConfig.hudScoreH * sy * 0.72,
+        fontWeight: FontWeight.bold,
+        align: TextAlign.center,
+        baselineCenter: true);
+
+    // ── level slot ──────────────────────────────────────────────────────────
+    final lCX = slotCX(GameConfig.hudLevelX, GameConfig.hudLevelW);
+    final lCY = slotCY(GameConfig.hudLevelY, GameConfig.hudLevelH);
+    _drawText(canvas, '${game.level}', lCX, lCY,
+        color: Colors.white,
+        fontSize: GameConfig.hudLevelH * sy * 0.72,
+        fontWeight: FontWeight.bold,
+        align: TextAlign.center,
+        baselineCenter: true);
+
+    // ── lives slot — 4 dots centered in the slot rect ───────────────────────
+    final liSlotX = GameConfig.hudLivesX * sx;
+    final liSlotW = GameConfig.hudLivesW * sx;
+    final liCY    = slotCY(GameConfig.hudLivesY, GameConfig.hudLivesH);
+    const dotCount = 4;
+    final dotR    = (GameConfig.hudLivesH * sy * 0.5 * 0.42).clamp(3.0, 7.0);
+    final dotStep = dotR * 2.8;
+    final dotsStartX = liSlotX + liSlotW / 2 - (dotCount - 1) * dotStep / 2;
+    for (int i = 0; i < dotCount; i++) {
+      final dx = dotsStartX + i * dotStep;
+      final alive = i < game.lives;
+      canvas.drawCircle(Offset(dx, liCY), dotR,
+          alive ? _liveRedPaint : _liveDeadPaint);
+      if (alive) canvas.drawCircle(Offset(dx, liCY), dotR, _liveStrokePaint);
+    }
+
+    // ── Progress bar immediately below HUD image ─────────────────────────────
     final currentLvlPts = game.pointsForLevel(game.level);
-    final nextLvlPts = game.pointsForLevel(game.level + 1);
-    final progressInLvl = game.score - currentLvlPts;
-    final ptsNeeded = nextLvlPts - currentLvlPts;
+    final nextLvlPts    = game.pointsForLevel(game.level + 1);
+    final ptsNeeded     = nextLvlPts - currentLvlPts;
     final pct = ptsNeeded == 0
         ? 0.0
-        : min(100.0, (progressInLvl / ptsNeeded) * 100);
-
-    canvas.drawRect(Rect.fromLTWH(0, 60, GameController.gameWidth, 4),
-        Paint()..color = const Color(0xFF1E293B));
-    canvas.drawRect(
-        Rect.fromLTWH(0, 60, GameController.gameWidth * pct / 100, 4),
-        Paint()..color = const Color(0xFFFBBF24));
+        : min(100.0, ((game.score - currentLvlPts) / ptsNeeded) * 100);
+    canvas.drawRect(Rect.fromLTWH(0, hudH, gw, 4), _progressBgPaint);
+    canvas.drawRect(Rect.fromLTWH(0, hudH, gw * pct / 100, 4), _progressYellowPaint);
   }
 
   // ---- Sprite blit with optional opacity (preserves source aspect ratio
   // expectations: caller picks the dst rect). ----
   void _drawSprite(Canvas canvas, ui.Image image, Rect dst,
       {double opacity = 1.0}) {
-    final paint = Paint()..filterQuality = FilterQuality.medium;
     if (opacity < 1.0) {
-      paint.colorFilter = ColorFilter.mode(
+      _spritePaint.colorFilter = ColorFilter.mode(
           Colors.white.withValues(alpha: opacity), BlendMode.modulate);
+    } else {
+      _spritePaint.colorFilter = null;
     }
     final src = Rect.fromLTWH(
         0, 0, image.width.toDouble(), image.height.toDouble());
-    canvas.drawImageRect(image, src, dst, paint);
+    canvas.drawImageRect(image, src, dst, _spritePaint);
   }
 
   // ---- Generator backs (z-level 2 — drawn after all conveyor belts) ----
@@ -328,6 +394,7 @@ class GamePainter extends CustomPainter {
     final spawnLabelY = isDown ? conv.y - 6 : conv.y + h + 6;
     final flash = conv.maintenance ? game.maintenanceFlash() : 0.0;
     final rFlash = conv.resizing ? game.resizeFlash() : 0.0;
+    final frozenPulse = conv.frozen ? (0.5 + 0.5 * sin(now * 0.005)) : 0.0;
     final pendingArrow =
         (conv.pendingDirection ?? conv.direction) == ConveyorDirection.down
             ? '▼'
@@ -356,12 +423,35 @@ class GamePainter extends CustomPainter {
     final brX = conv.x + conv.width;
     final topY = conv.y;
     final botY = conv.y + h;
-    final bodyPath = Path()
-      ..moveTo(tlX, topY)
-      ..lineTo(trX, topY)
-      ..lineTo(brX, botY)
-      ..lineTo(blX, botY)
-      ..close();
+
+    // Retrieve or build per-conveyor geometry (body path + shear matrix).
+    // Rebuilds only when h or xLean changes (during resize); otherwise reuses.
+    final cachedGeom = _convGeomCache[conv.id];
+    final _ConvGeom geom;
+    if (cachedGeom != null && cachedGeom.h == h && cachedGeom.xLean == xLean) {
+      geom = cachedGeom;
+    } else {
+      final path = Path()
+        ..moveTo(tlX, topY)
+        ..lineTo(trX, topY)
+        ..lineTo(brX, botY)
+        ..lineTo(blX, botY)
+        ..close();
+      Float64List? matrix;
+      if (xLean != 0.0) {
+        final shear = xLean / h;
+        final tx = -xLean * (conv.y + h) / h;
+        matrix = Float64List.fromList([
+          1, 0, 0, 0,
+          shear, 1, 0, 0,
+          0, 0, 1, 0,
+          tx, 0, 0, 1,
+        ]);
+      }
+      geom = _ConvGeom(h: h, xLean: xLean, bodyPath: path, shearMatrix: matrix);
+      _convGeomCache[conv.id] = geom;
+    }
+    final bodyPath = geom.bodyPath;
 
     // Allowed-target dashed glow (trapezoidal outline)
     if (isAllowedTarget && !conv.maintenance) {
@@ -373,10 +463,9 @@ class GamePainter extends CustomPainter {
           ..lineTo(brX + pad, botY + pad)
           ..lineTo(blX - pad, botY + pad)
           ..close(),
-        Paint()
+        (_sp
           ..color = const Color(0xFF22C55E).withValues(alpha: 0.4 + highlightPulse * 0.5)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2,
+          ..strokeWidth = 2),
       );
     }
 
@@ -390,7 +479,7 @@ class GamePainter extends CustomPainter {
           ..lineTo(brX + pad, botY + pad)
           ..lineTo(blX - pad, botY + pad)
           ..close(),
-        Paint()..color = const Color(0xFFEF4444).withValues(alpha: 0.08),
+        (_p..color = const Color(0xFFEF4444).withValues(alpha: 0.08)),
       );
     }
 
@@ -420,7 +509,7 @@ class GamePainter extends CustomPainter {
     // Belt body
     final convImg = GameAssets.instance.conveyorImage(conv.color);
     if (convImg == null) {
-      canvas.drawPath(bodyPath, Paint()..color = const Color(0xFF475569));
+      canvas.drawPath(bodyPath, _beltFallbackPaint);
     }
 
     // Scrolling belt surface — clip to belt body. Sprite tiles vertically
@@ -432,37 +521,29 @@ class GamePainter extends CustomPainter {
     // no shift. This makes the surface pattern follow the belt lean instead
     // of being a flat rectangle that leaves uncovered corners on outer belts.
     canvas.save();
-    if (xLean != 0.0) {
-      final shear = xLean / h;
-      final tx = -xLean * (conv.y + h) / h;
-      canvas.transform(Float64List.fromList([
-        1, 0, 0, 0,
-        shear, 1, 0, 0,
-        0, 0, 1, 0,
-        tx, 0, 0, 1,
-      ]));
-    }
+    if (geom.shearMatrix != null) canvas.transform(geom.shearMatrix!);
     if (convImg != null) {
       final tileH = conv.width * (convImg.height / convImg.width);
-      final scroll = conv.maintenance ? 0.0 : (offset % tileH);
+      final scroll = (conv.maintenance || conv.frozen) ? 0.0 : (offset % tileH);
       final numTiles = (h / tileH).ceil() + 2;
       for (int i = 0; i < numTiles; i++) {
         final y = conv.y + (i * tileH + scroll) - tileH;
         _drawSprite(canvas, convImg,
             Rect.fromLTWH(conv.x, y, conv.width, tileH));
       }
-    } else if (!conv.maintenance) {
+    } else if (!conv.maintenance && !conv.frozen) {
       final scroll = offset % 24;
       final numStripes = (h / 24).ceil() + 2;
-      final stripePaint = Paint()
-        ..color = const Color(0xFF64748B).withValues(alpha: 0.5);
+      _p.color = const Color(0xFF64748B).withValues(alpha: 0.5);
       for (int i = 0; i < numStripes; i++) {
-        final stripeRect = RRect.fromRectAndRadius(
-          Rect.fromLTWH(conv.x + 4, conv.y + (i * 24 + scroll) - 24,
-              conv.width - 8, 12),
-          const Radius.circular(2),
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromLTWH(conv.x + 4, conv.y + (i * 24 + scroll) - 24,
+                conv.width - 8, 12),
+            const Radius.circular(2),
+          ),
+          _p,
         );
-        canvas.drawRRect(stripeRect, stripePaint);
       }
     }
     canvas.restore();
@@ -474,10 +555,8 @@ class GamePainter extends CustomPainter {
 
     // Resize flash overlay
     if (conv.resizing) {
-      final fillPaint = Paint()
-        ..color =
-            const Color(0xFF06B6D4).withValues(alpha: 0.15 + rFlash * 0.25);
-      canvas.drawPath(bodyPath, fillPaint);
+      canvas.drawPath(bodyPath,
+          (_p..color = const Color(0xFF06B6D4).withValues(alpha: 0.15 + rFlash * 0.25)));
       final arrowOpacity = 0.7 + rFlash * 0.3;
       _drawText(
         canvas,
@@ -514,10 +593,8 @@ class GamePainter extends CustomPainter {
       // for each badge's Y so they follow the belt lean at both ends.
       for (final yPos in [conv.y + 20, conv.y + h - 20]) {
         final badgeX = beltCenterAt((yPos - conv.y) / h);
-        canvas.drawCircle(
-            Offset(badgeX, yPos),
-            10,
-            Paint()..color = const Color(0xFF0F172A).withValues(alpha: 0.9));
+        canvas.drawCircle(Offset(badgeX, yPos), 10,
+            (_p..color = const Color(0xFF0F172A).withValues(alpha: 0.9)));
         _drawText(canvas, pendingArrow, badgeX, yPos,
             color: const Color(0xFFFBBF24),
             fontSize: 14,
@@ -526,6 +603,43 @@ class GamePainter extends CustomPainter {
             baselineCenter: true);
       }
     }
+
+    // Frozen (icy) overlay — ice-blue tint with frost crystals and snowflake badges.
+    if (conv.frozen) {
+      canvas.drawPath(bodyPath,
+          (_p..color = const Color(0xFF00BFFF).withValues(alpha: 0.18 + frozenPulse * 0.12)));
+
+      // Frost crystal dots (sheared with the belt lean).
+      canvas.save();
+      if (geom.shearMatrix != null) canvas.transform(geom.shearMatrix!);
+      final frostRng = Random(conv.id * 31 + (now / 220).toInt());
+      for (int i = 0; i < 10; i++) {
+        final fx = conv.x + 3 + frostRng.nextDouble() * (conv.width - 6);
+        final fy = conv.y + 3 + frostRng.nextDouble() * (h - 6);
+        final fr = 1.2 + frostRng.nextDouble() * 2.0;
+        _p.color = const Color(0xFFBAE6FD).withValues(alpha: 0.30 + frozenPulse * 0.45);
+        canvas.drawCircle(Offset(fx, fy), fr, _p);
+      }
+      canvas.restore();
+
+      // Snowflake badges at top and bottom of the belt.
+      for (final yPos in [conv.y + 22.0, conv.y + h - 22.0]) {
+        if (yPos < conv.y + 10 || yPos > conv.y + h - 10) continue;
+        final badgeX = beltCenterAt((yPos - conv.y) / h);
+        canvas.drawCircle(Offset(badgeX, yPos), 10,
+            (_p..color = const Color(0xFF0F172A).withValues(alpha: 0.85)));
+        _drawText(canvas, '❄', badgeX, yPos,
+            color: const Color(0xFF7DD3FC).withValues(alpha: 0.85 + frozenPulse * 0.15),
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+            align: TextAlign.center,
+            baselineCenter: true);
+      }
+    }
+
+    // Belt explosion wave: fire rushes from gate to generator after a bomb.
+    // Drawn inside the outer bodyPath clip so it's naturally masked to the belt.
+    _drawBeltExplosion(canvas, conv, now, geom);
 
     canvas.restore();
 
@@ -557,21 +671,12 @@ class GamePainter extends CustomPainter {
       // at topY the ghost shifts left by xLean; at botY no shift.
       canvas.save();
       canvas.clipPath(bodyPath);
-      if (xLean != 0.0) {
-        final shear = xLean / h;
-        final tx = -xLean * (conv.y + h) / h;
-        canvas.transform(Float64List.fromList([
-          1, 0, 0, 0,
-          shear, 1, 0, 0,
-          0, 0, 1, 0,
-          tx, 0, 0, 1,
-        ]));
-      }
+      if (geom.shearMatrix != null) canvas.transform(geom.shearMatrix!);
       canvas.drawRRect(
         RRect.fromRectAndRadius(
             Rect.fromLTWH(ghostDrawX, ghostDrawY, ghostVisualSize, ghostVisualSize),
             const Radius.circular(6)),
-        Paint()..color = fillColor.withValues(alpha: 0.45 * pulse),
+        (_p..color = fillColor.withValues(alpha: 0.45 * pulse)),
       );
       _drawDashedRRect(
         canvas,
@@ -588,7 +693,10 @@ class GamePainter extends CustomPainter {
     // Left + right rails with state-dependent color
     Color leftRailColor = const Color(0xFF94A3B8);
     Color rightRailColor = const Color(0xFF1E293B);
-    if (conv.maintenance) {
+    if (conv.frozen) {
+      leftRailColor = const Color(0xFF38BDF8).withValues(alpha: 0.6 + frozenPulse * 0.4);
+      rightRailColor = leftRailColor;
+    } else if (conv.maintenance) {
       leftRailColor = const Color(0xFFFBBF24).withValues(alpha: 0.6 + flash * 0.4);
       rightRailColor = leftRailColor;
     } else if (conv.resizing) {
@@ -603,7 +711,7 @@ class GamePainter extends CustomPainter {
         ..lineTo(blX + botRailW, botY)
         ..lineTo(blX, botY)
         ..close(),
-      Paint()..color = leftRailColor,
+      (_p..color = leftRailColor),
     );
     canvas.drawPath(
       Path()
@@ -612,38 +720,25 @@ class GamePainter extends CustomPainter {
         ..lineTo(brX, botY)
         ..lineTo(brX - botRailW, botY)
         ..close(),
-      Paint()..color = rightRailColor,
+      (_p..color = rightRailColor),
     );
 
     // Debug: slot boundaries scrolling with the belt surface
     if (game.debugSlots) {
       canvas.save();
       canvas.clipPath(bodyPath);
-      if (xLean != 0.0) {
-        final shear = xLean / h;
-        final tx = -xLean * (conv.y + h) / h;
-        canvas.transform(Float64List.fromList([
-          1, 0, 0, 0,
-          shear, 1, 0, 0,
-          0, 0, 1, 0,
-          tx, 0, 0, 1,
-        ]));
-      }
-      final scroll = conv.maintenance ? 0.0 : (offset % GameController.boxSize);
+      if (geom.shearMatrix != null) canvas.transform(geom.shearMatrix!);
+      final scroll = (conv.maintenance || conv.frozen) ? 0.0 : (offset % GameController.boxSize);
       final nVisible = (h / GameController.boxSize).ceil() + 2;
-      final slotBorder = Paint()
-        ..color = const Color(0xFF00FF00).withValues(alpha: 0.6)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1;
-      final slotFill = Paint()
-        ..color = const Color(0xFF00FF00).withValues(alpha: 0.08);
       for (int s = 0; s < nVisible; s++) {
         final slotTop =
             conv.y + s * GameController.boxSize + scroll - GameController.boxSize;
         final slotRect = Rect.fromLTWH(
             conv.x + 3, slotTop, conv.width - 6, GameController.boxSize);
-        canvas.drawRect(slotRect, slotFill);
-        canvas.drawRect(slotRect, slotBorder);
+        canvas.drawRect(slotRect,
+            (_p..color = const Color(0xFF00FF00).withValues(alpha: 0.08)));
+        canvas.drawRect(slotRect,
+            (_sp..color = const Color(0xFF00FF00).withValues(alpha: 0.6)..strokeWidth = 1));
       }
       canvas.restore();
     }
@@ -674,24 +769,20 @@ class GamePainter extends CustomPainter {
   // ---- Procedural gate fallback (used when no PNG is present) ----
   void _drawProceduralGate(Canvas canvas, Conveyor conv, Rect r) {
     final gateOpacity = conv.maintenance ? 0.5 : 1.0;
-    final s = r.height / 40.0; // scale factor relative to original 40px design
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(r, Radius.circular(4 * s)),
-      Paint()..color = conv.color.dark.withValues(alpha: gateOpacity),
-    );
+    final s = r.height / 40.0;
+    canvas.drawRRect(RRect.fromRectAndRadius(r, Radius.circular(4 * s)),
+        (_p..color = conv.color.dark.withValues(alpha: gateOpacity)));
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(r.left + 3 * s, r.top + 3 * s,
-              r.width - 6 * s, r.height - 6 * s),
+          Rect.fromLTWH(r.left + 3 * s, r.top + 3 * s, r.width - 6 * s, r.height - 6 * s),
           Radius.circular(3 * s)),
-      Paint()..color = conv.color.bg.withValues(alpha: gateOpacity),
+      (_p..color = conv.color.bg.withValues(alpha: gateOpacity)),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
           Rect.fromLTWH(r.left + 4 * s, r.top + 6 * s, r.width - 8 * s, 5 * s),
           Radius.circular(2 * s)),
-      Paint()
-        ..color = conv.color.light.withValues(alpha: conv.maintenance ? 0.3 : 0.7),
+      (_p..color = conv.color.light.withValues(alpha: conv.maintenance ? 0.3 : 0.7)),
     );
   }
 
@@ -699,16 +790,104 @@ class GamePainter extends CustomPainter {
   void _drawDiagonalStripes(Canvas canvas, Rect rect, {double opacity = 1.0}) {
     canvas.save();
     canvas.clipRect(rect);
-    // Use a rotated transform so stripes run diagonally
     canvas.translate(rect.left + rect.width / 2, rect.top + rect.height / 2);
     canvas.rotate(pi / 4);
     final len = rect.width + rect.height;
-    final yellow = Paint()..color = const Color(0xFFFBBF24).withValues(alpha: opacity);
-    final dark = Paint()..color = const Color(0xFF1E293B).withValues(alpha: opacity);
+    final yellowColor = const Color(0xFFFBBF24).withValues(alpha: opacity);
+    final darkColor = const Color(0xFF1E293B).withValues(alpha: opacity);
     for (double x = -len; x < len; x += 10) {
-      canvas.drawRect(Rect.fromLTWH(x, -len, 5, len * 2), yellow);
-      canvas.drawRect(Rect.fromLTWH(x + 5, -len, 5, len * 2), dark);
+      canvas.drawRect(Rect.fromLTWH(x, -len, 5, len * 2), (_p..color = yellowColor));
+      canvas.drawRect(Rect.fromLTWH(x + 5, -len, 5, len * 2), (_p..color = darkColor));
     }
+    canvas.restore();
+  }
+
+  // ---- Belt explosion wave (bomb effect) ----
+  void _drawBeltExplosion(
+      Canvas canvas, Conveyor conv, double now, _ConvGeom geom) {
+    BeltExplosion? explosion;
+    for (final e in game.beltExplosions) {
+      if (e.conveyorId == conv.id) {
+        explosion = e;
+        break;
+      }
+    }
+    if (explosion == null) return;
+
+    final elapsed = now - explosion.startTime;
+    final rawT = (elapsed / explosion.duration).clamp(0.0, 1.0);
+    // Ease-out cubic: fast initial rush that slows as it reaches the generator.
+    final t = 1.0 - pow(1.0 - rawT, 3.0);
+
+    final waveFrontY =
+        explosion.fromY + (explosion.toY - explosion.fromY) * t;
+    final movingDown = explosion.toY > explosion.fromY;
+
+    // Burned region spans from origin (gate edge) to current wave front.
+    final burnedTop    = movingDown ? explosion.fromY : waveFrontY;
+    final burnedBottom = movingDown ? waveFrontY       : explosion.fromY;
+
+    // Apply the same shear as the belt texture so the wave follows the lean.
+    canvas.save();
+    if (geom.shearMatrix != null) canvas.transform(geom.shearMatrix!);
+
+    final left  = conv.x;
+    final right = conv.x + conv.width;
+
+    // ── Fire body gradient: transparent at tail → bright orange at front ──
+    if (burnedBottom - burnedTop > 0.5) {
+      _p.shader = ui.Gradient.linear(
+        Offset(left, explosion.fromY), // tail (transparent)
+        Offset(left, waveFrontY),      // front (bright)
+        const [
+          Color(0x00FF4500),
+          Color(0x88FF3300),
+          Color(0xCCFF6600),
+        ],
+        [0.0, 0.45, 1.0],
+      );
+      canvas.drawRect(
+          Rect.fromLTRB(left, burnedTop, right, burnedBottom), _p);
+      _p.shader = null;
+    }
+
+    // ── Wave-front glow: bright band extending ahead of the front ──
+    const glowH = 26.0;
+    final ahead = movingDown ? 1.0 : -1.0; // direction of travel
+    _p.shader = ui.Gradient.linear(
+      Offset(left, waveFrontY),                   // at front: white-hot
+      Offset(left, waveFrontY + ahead * glowH),   // ahead: transparent
+      const [
+        Color(0xCCFFFFFF),
+        Color(0x66FF9900),
+        Color(0x00FF6600),
+      ],
+      [0.0, 0.45, 1.0],
+    );
+    canvas.drawRect(
+      Rect.fromLTRB(
+        left,
+        movingDown ? waveFrontY - 3 : waveFrontY - glowH + 3,
+        right,
+        movingDown ? waveFrontY + glowH : waveFrontY + 3,
+      ),
+      _p,
+    );
+    _p.shader = null;
+
+    // ── Sparks: pseudo-random dots that flicker near the wave front ──
+    // Seed changes every ~80 ms for a natural flicker rate.
+    final sparkSeed = (now / 80).toInt() * 17 + conv.id * 97;
+    final rng = Random(sparkSeed);
+    for (int i = 0; i < 7; i++) {
+      final sx = left + 3 + rng.nextDouble() * (conv.width - 6);
+      final sy = waveFrontY + ahead * rng.nextDouble() * 16;
+      final sr = 1.0 + rng.nextDouble() * 2.5;
+      final sa = 0.55 + rng.nextDouble() * 0.45;
+      _p.color = const Color(0xFFFFCC00).withValues(alpha: sa);
+      canvas.drawCircle(Offset(sx, sy), sr, _p);
+    }
+
     canvas.restore();
   }
 
@@ -717,13 +896,8 @@ class GamePainter extends CustomPainter {
   // A solid pulsing outline is visually equivalent and O(1) to paint.
   void _drawDashedRRect(
       Canvas canvas, RRect rrect, Color color, double strokeWidth, double opacity) {
-    canvas.drawRRect(
-      rrect,
-      Paint()
-        ..color = color.withValues(alpha: opacity)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = strokeWidth,
-    );
+    canvas.drawRRect(rrect,
+        (_sp..color = color.withValues(alpha: opacity)..strokeWidth = strokeWidth));
   }
 
   // ---- Motion trail of the dragged box ----
@@ -817,14 +991,13 @@ class GamePainter extends CustomPainter {
 
     // Floor shadow — stays at unlifted Y so the lift reads as height.
     if (isDragged || isThrown) {
-      final shadowPaint = Paint()..color = Colors.black.withValues(alpha: 0.3);
       canvas.drawOval(
         Rect.fromCenter(
           center: Offset(box.x + box.size / 2, box.y + box.size + 4),
           width: box.size * 0.7,
           height: 6,
         ),
-        shadowPaint,
+        (_p..color = Colors.black.withValues(alpha: 0.3)),
       );
     }
 
@@ -851,26 +1024,22 @@ class GamePainter extends CustomPainter {
       final double normY = speed > 0 ? vy / speed : 0.0;
       for (int i = 0; i < 3; i++) {
         final streakLen = 8 + i * 4;
-        final paint = Paint()
-          ..color = box.color.light.withValues(alpha: 0.5 - i * 0.12)
-          ..strokeWidth = 3 - i * 0.7
-          ..strokeCap = StrokeCap.round;
         canvas.drawLine(
           Offset(cx - normX * (streakLen + i * 6),
               cy - normY * (streakLen + i * 6)),
           Offset(cx - normX * (i * 4), cy - normY * (i * 4)),
-          paint,
+          (_sp
+            ..color = box.color.light.withValues(alpha: 0.5 - i * 0.12)
+            ..strokeWidth = 3 - i * 0.7
+            ..strokeCap = StrokeCap.round),
         );
       }
     }
 
     // Outer aura during drag / throw
     if (isDragged || isThrown) {
-      canvas.drawCircle(
-        Offset(cx, cy),
-        box.size * 0.9,
-        Paint()..color = box.color.bg.withValues(alpha: 0.15),
-      );
+      canvas.drawCircle(Offset(cx, cy), box.size * 0.9,
+          (_p..color = box.color.bg.withValues(alpha: 0.15)));
     }
 
     // Body — special sprite > color sprite > procedural, transformed around
@@ -935,47 +1104,39 @@ class GamePainter extends CustomPainter {
     final x = box.x + xOffset;
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(x, box.y, box.size, box.size),
-          const Radius.circular(6)),
-      Paint()..color = box.color.dark.withValues(alpha: opacity),
+          Rect.fromLTWH(x, box.y, box.size, box.size), const Radius.circular(6)),
+      (_p..color = box.color.dark.withValues(alpha: opacity)),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
           Rect.fromLTWH(x + 2, box.y + 2, box.size - 4, box.size - 4),
           const Radius.circular(5)),
-      Paint()..color = box.color.bg.withValues(alpha: opacity),
+      (_p..color = box.color.bg.withValues(alpha: opacity)),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(x + 4, box.y + 4, box.size - 8, 6),
-          const Radius.circular(3)),
-      Paint()..color = box.color.light.withValues(alpha: opacity * 0.7),
+          Rect.fromLTWH(x + 4, box.y + 4, box.size - 8, 6), const Radius.circular(3)),
+      (_p..color = box.color.light.withValues(alpha: opacity * 0.7)),
     );
     canvas.drawCircle(
       Offset(x + box.size / 2, box.y + box.size / 2 + 2),
       6,
-      Paint()..color = box.color.light.withValues(alpha: opacity * 0.9),
+      (_p..color = box.color.light.withValues(alpha: opacity * 0.9)),
     );
   }
 
   void _drawProceduralSpecialBox(Canvas canvas, Box box, double opacity,
       {double xOffset = 0.0}) {
     final x = box.x + xOffset;
-    // Dark body with orange glow border
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(x, box.y, box.size, box.size),
-          const Radius.circular(6)),
-      Paint()..color = const Color(0xFF1A1A1A).withValues(alpha: opacity),
+          Rect.fromLTWH(x, box.y, box.size, box.size), const Radius.circular(6)),
+      (_p..color = const Color(0xFF1A1A1A).withValues(alpha: opacity)),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(x, box.y, box.size, box.size),
-          const Radius.circular(6)),
-      Paint()
-        ..color = const Color(0xFFFF6600).withValues(alpha: opacity * 0.9)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2,
+          Rect.fromLTWH(x, box.y, box.size, box.size), const Radius.circular(6)),
+      (_sp..color = const Color(0xFFFF6600).withValues(alpha: opacity * 0.9)..strokeWidth = 2),
     );
     final icon = switch (box.specialType) {
       SpecialType.bomb => '💣',
@@ -1025,15 +1186,14 @@ class GamePainter extends CustomPainter {
   void _drawProceduralFallingBox(Canvas canvas, FallingBox fb, double opacity) {
     canvas.drawRRect(
       RRect.fromRectAndRadius(
-          Rect.fromLTWH(fb.x, fb.y, fb.size, fb.size),
-          const Radius.circular(6)),
-      Paint()..color = fb.color.dark.withValues(alpha: opacity),
+          Rect.fromLTWH(fb.x, fb.y, fb.size, fb.size), const Radius.circular(6)),
+      (_p..color = fb.color.dark.withValues(alpha: opacity)),
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
           Rect.fromLTWH(fb.x + 2, fb.y + 2, fb.size - 4, fb.size - 4),
           const Radius.circular(5)),
-      Paint()..color = fb.color.bg.withValues(alpha: opacity),
+      (_p..color = fb.color.bg.withValues(alpha: opacity)),
     );
   }
 
@@ -1081,37 +1241,23 @@ class GamePainter extends CustomPainter {
     Color? strokeColor,
     double strokeWidth = 0,
   }) {
-    final textStyle = TextStyle(
-      color: color,
-      fontSize: fontSize,
-      fontWeight: fontWeight,
-      letterSpacing: letterSpacing,
-    );
-
-    final textSpan = TextSpan(text: text, style: textStyle);
-    final tp = TextPainter(
-      text: textSpan,
-      textAlign: align,
-      textDirection: TextDirection.ltr,
-    );
-    tp.layout();
-
-    double offsetX = x;
-    double offsetY = y;
-    if (align == TextAlign.center) {
-      offsetX -= tp.width / 2;
-    } else if (align == TextAlign.right) {
-      offsetX -= tp.width;
-    }
-    if (baselineCenter) {
-      offsetY -= tp.height / 2;
-    } else {
-      // Approximate SVG-style baseline positioning (y is the baseline, roughly)
-      offsetY -= tp.height * 0.75;
-    }
-
-    // Optional stroke (for the big LEVEL number)
+    // Stroke variant is rare — skip cache and allocate directly.
     if (strokeColor != null && strokeWidth > 0) {
+      final textStyle = TextStyle(
+          color: color,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          letterSpacing: letterSpacing);
+      final tp = TextPainter(
+        text: TextSpan(text: text, style: textStyle),
+        textAlign: align,
+        textDirection: TextDirection.ltr,
+      )..layout();
+      double ox = x, oy = y;
+      if (align == TextAlign.center) { ox -= tp.width / 2; }
+      else if (align == TextAlign.right) { ox -= tp.width; }
+      if (baselineCenter) { oy -= tp.height / 2; }
+      else { oy -= tp.height * 0.75; }
       final strokePainter = TextPainter(
         text: TextSpan(
           text: text,
@@ -1124,11 +1270,26 @@ class GamePainter extends CustomPainter {
         ),
         textAlign: align,
         textDirection: TextDirection.ltr,
-      );
-      strokePainter.layout();
-      strokePainter.paint(canvas, Offset(offsetX, offsetY));
+      )..layout();
+      strokePainter.paint(canvas, Offset(ox, oy));
+      tp.paint(canvas, Offset(ox, oy));
+      return;
     }
 
+    final tp = _cachedText(
+      text: text,
+      color: color,
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      align: align,
+      letterSpacing: letterSpacing,
+    );
+    double offsetX = x;
+    double offsetY = y;
+    if (align == TextAlign.center) { offsetX -= tp.width / 2; }
+    else if (align == TextAlign.right) { offsetX -= tp.width; }
+    if (baselineCenter) { offsetY -= tp.height / 2; }
+    else { offsetY -= tp.height * 0.75; }
     tp.paint(canvas, Offset(offsetX, offsetY));
   }
 

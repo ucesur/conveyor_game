@@ -24,6 +24,10 @@ class Conveyor {
   double fromHeight;
   double toHeight;
 
+  // Frozen state (after icy special scores — belt pauses briefly)
+  bool frozen;
+  double frozenUntil;
+
   Conveyor({
     required this.id,
     required this.color,
@@ -40,6 +44,8 @@ class Conveyor {
     this.resizeStart = 0,
     double? fromHeight,
     double? toHeight,
+    this.frozen = false,
+    this.frozenUntil = 0,
   })  : fromHeight = fromHeight ?? height,
         toHeight = toHeight ?? height;
 }

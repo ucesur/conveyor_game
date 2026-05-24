@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 195" width="100%" height="100%">
+  <image href="HUD.png" x="0" y="0" width="800" height="195" />
+
+  <svg id="score" x="14" y="132" width="216" height="50">
+    </svg>
+
+  <svg id="level" x="322" y="132" width="156" height="50">
+    </svg>
+
+  <svg id="lives" x="570" y="132" width="172" height="50">
+    </svg>
+</svg>

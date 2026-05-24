@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 290" width="100%" height="100%">
+  <image href="container.png" x="0" y="0" width="800" height="290" />
+
+  <svg id="slot_1" x="78" y="75" width="160" height="165">
+    </svg>
+
+  <svg id="slot_2" x="282" y="75" width="160" height="165">
+    </svg>
+
+  <svg id="slot_3" x="523" y="75" width="160" height="165">
+    </svg>
+</svg>
