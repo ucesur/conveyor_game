@@ -1,65 +1,73 @@
 # CLAUDE.md
 
 ## Commands
+`flutter pub get` · `flutter run [-d chrome|windows]` · `flutter test` · `flutter analyze` · `flutter build apk|web`
 
-```bash
-flutter pub get
-flutter run                        # connected device
-flutter run -d chrome|windows      # web / desktop
-flutter test
-flutter analyze
-flutter build apk|web
-```
-
-> `test/widget_test.dart` references a deleted `MyApp` — ignore or replace with a `ConveyorMatchApp` smoke test.
+> `test/widget_test.dart` has deleted `MyApp` — ignore or replace with `ConveyorMatchApp` smoke test.
 
 ## Architecture
 
-Fixed **360×600 virtual canvas**, letterboxed via `AspectRatio` + `ClipRRect`.
+**Canvas:** 360×600, letterboxed via `AspectRatio`+`ClipRRect`.  
+**Data flow:** `Ticker` → `GameController.update(ms)` → `notifyListeners()` → `AnimatedBuilder` → `GamePainter.paint()`  
+**Coords:** pointer events in widget px; `GameScreen._toGameCoords()` converts via `_computeScale` + letterbox offsets.
 
-**Data flow:** `Ticker` → `GameController.update(ms)` → `notifyListeners()` → `AnimatedBuilder` → `GamePainter.paint()`
+### Controller — `lib/game/`
 
-`GameController` (`lib/game/game_controller.dart`) is the single source of truth — extends `ChangeNotifier`, owns `boxes`, `conveyors`, `popups`, `transition`, `score`, `lives`, `level`, `gameState`.
+`GameController` (`game_controller.dart`) holds all state and calls system methods. Logic is split into **`part of`** extension files in `systems/` — same library, full private access, no circular imports.
 
-Pointer events arrive in widget pixels; `GameScreen._toGameCoords()` converts via `_computeScale` + letterbox offsets.
-
-### Files
-
-| File | Role |
+| File | System |
 |---|---|
-| `lib/game/game_controller.dart` | Game loop, physics, spawn/move/score, drag rules, maintenance & resize |
-| `lib/widgets/game_painter.dart` | Pure `CustomPainter` — reads controller, never writes |
-| `lib/screens/game_screen.dart` | Ticker owner, pointer-event bridge, overlays |
-| `lib/models/conveyor.dart` | Belt state (direction, height, maintenance, resize) |
-| `lib/models/box.dart` | Box state (position, drag trail, velocity) |
-| `lib/models/box_color.dart` | 5 `BoxColor` entries with `bg`/`dark`/`light` variants |
-| `lib/models/popup.dart` | Short-lived "+1" / "✗" / warning popups |
-| `lib/models/transition.dart` | Level-up splash (`level`, `startTime`) |
+| `game_controller.dart` | State fields, constants, `update()`, `setupLevel`, state transitions, shared utils |
+| `systems/belt_system.dart` | Maintenance reversals, resize, freeze |
+| `systems/box_system.dart` | Slot helpers, spawn, move, gate scoring |
+| `systems/drag_system.dart` | Drag start/move/end, throw animation, `throwPose` |
+| `systems/particle_system.dart` | Dust, explosion, ice particles, belt explosion |
+| `systems/combo_system.dart` | Combo area, special box spawning, bomb/icy triggers |
+| `systems/level_system.dart` | Level-up, belt addition |
 
-### Game loop (frame capped at 50 ms dt)
+### Painter — `lib/widgets/`
 
-1. Expire popups > 800 ms old.
-2. `LevelTransition` active → freeze gameplay for 2400 ms, then `setupLevel`.
-3. Stochastic checks trigger maintenance (direction reversal) and resize on random belts.
-4. `_spawnBoxes` — places box just off the entry end of a random belt.
-5. `_moveBoxes` — advances non-dragged boxes; boxes reaching the gate are scored.
-6. `_checkLevelUp` — `pointsForLevel(lvl) = Σ(6 + i*4)`.
+`GamePainter` (`game_painter.dart`) is a thin coordinator. Paint singletons are library-level top-level variables. Layers are **`part of`** extensions.
+
+| File | Layer |
+|---|---|
+| `game_painter.dart` | `paint()` orchestrator, shared utils (`_drawText`, `_drawSprite`) |
+| `painters/hud_layer.dart` | Background, HUD bar, lives, progress |
+| `painters/belt_layer.dart` | Conveyor body, overlays, gate, explosion wave |
+| `painters/combo_layer.dart` | Combo recipe panel |
+| `painters/box_layer.dart` | Boxes, trail, falling boxes |
+| `painters/effect_layer.dart` | Particles, popups |
+
+### Extensibility hooks
+
+| File | Purpose |
+|---|---|
+| `game/specials/special_effect.dart` | `abstract SpecialEffect` + `SpecialRegistry` — add new special types without touching core |
+| `game/stages/game_stage.dart` | `abstract GameStage` + `NormalStage` — override spawn, scoring, or update for boss stages |
+
+**Adding a new special type:**
+1. Add entry to `SpecialType` enum
+2. Create `lib/game/specials/my_effect.dart` implementing `SpecialEffect`
+3. Call `SpecialRegistry.register(MyEffect())` at app startup
+
+**Adding a boss stage:**
+1. Create `lib/game/stages/boss_stage.dart` extending `GameStage`
+2. Set `controller.currentStage = BossStage()` before `setupLevel`
+
+### Models — `lib/models/`
+`Conveyor` · `Box` · `BoxColor` · `Popup` · `Particle` · `FallingBox` · `BeltExplosion` · `ComboArea` · `SpecialType` · `GameAssets`
+
+### Game loop (dt capped 50 ms)
+1. Expire popups >800 ms. 2. Resume: shift timestamps. 3. Belt events (reversals, resize, freeze). 4. Throw animations. 5. Particles + falling boxes. 6. Spawn + move boxes (gate → score). 7. Level-up check. 8. Combo reset. 9. Belt explosion cleanup. 10. `currentStage.onUpdate`.
 
 ### Drag rules
-
-- Drop only onto source belt or adjacent one (`|targetId − sourceId| ≤ 1`).
-- MAINTENANCE belts reject drops; box snaps back.
-- Occupied slot: nudge up to 20 × 10 px against travel direction for a free gap.
-- `allowedTargets` drives green dashed glow (reachable) / red tint (forbidden) in painter.
+Drop onto source or adjacent belt only (`|targetId−sourceId|≤1`). MAINTENANCE rejects. Occupied slot → nudge. `allowedTargets` → green glow / red tint.
 
 ### Conveyor states
-
-Belt can be `maintenance` (reversed, striped, boxes frozen) or `resizing` (height animating via `_easeInOut`). Always call `getCurrentHeight(conv, now)` — never read `conv.height` directly during resize.
+`maintenance` (reversed, striped, frozen boxes) · `resizing` (height animating) · `frozen` (icy). Always `getCurrentHeight(conv, now)` — never `conv.height` directly.
 
 ### Rendering
-
-`shouldRepaint` returns `true` unconditionally (rebuilds gated by `ChangeNotifier`). Pure `Canvas` calls — no image assets or external fonts.
+`shouldRepaint` always `true` (gated by `ChangeNotifier`). Pure `Canvas`. Library-level paint singletons (`_p`, `_sp`, etc.) shared across all painter layers.
 
 ## Linter
-
-`analysis_options.yaml` extends `flutter_lints`; enables `prefer_const_constructors`, `prefer_const_literals_to_create_immutables`; disables `avoid_print`.
+`analysis_options.yaml`: extends `flutter_lints`; enables `prefer_const_constructors`, `prefer_const_literals_to_create_immutables`; disables `avoid_print`.
