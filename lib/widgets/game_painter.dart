@@ -76,6 +76,7 @@ class GamePainter extends CustomPainter {
     _drawParticles(canvas, now);
     _drawGeneratorBacks(canvas, now);
     _drawFallingBoxes(canvas);
+    if (game.comboCount >= 2) _drawComboBalloon(canvas, now);
     _drawPopups(canvas, now);
   }
 

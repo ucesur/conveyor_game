@@ -62,6 +62,11 @@ class GameConfig {
   static const double spawnIntervalJitterMin = 0.7;
   static const double spawnIntervalJitterMax = 1.3;
 
+  // ── Combo balloon ────────────────────────────────────────────────────────
+  static const double comboBalloonWidth  = 90.0;  // rx * 2
+  static const double comboBalloonHeight = 100.0;  // ry * 2
+  static const double comboBalloonTailH  = 0.0;
+
   // ── Combination area ─────────────────────────────────────────────────────
   // Panel sits between the progress bar and the generator/conveyor zone.
   // comboAreaTop: after hudImageHeight (97.5) + 4px progress bar + gap.

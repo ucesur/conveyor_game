@@ -13,6 +13,7 @@ import '../models/special_type.dart';
 import 'game_config.dart';
 import 'specials/special_effect.dart';
 import 'stages/game_stage.dart';
+import '../models/game_audio.dart';
 
 part 'systems/belt_system.dart';
 part 'systems/box_system.dart';
@@ -69,6 +70,7 @@ class GameController extends ChangeNotifier {
   bool debugSlots  = false;
   bool debugPaused = false;
   bool hapticsEnabled = true;
+  bool audioEnabled   = true;
   double _debugFreezeTime = 0;
 
   void toggleDebugSlots() {
@@ -86,6 +88,12 @@ class GameController extends ChangeNotifier {
   void toggleHaptics() {
     hapticsEnabled = !hapticsEnabled;
     if (hapticsEnabled) HapticFeedback.lightImpact();
+    notifyListeners();
+  }
+
+  void toggleAudio() {
+    audioEnabled = !audioEnabled;
+    GameAudio.instance.enabled = audioEnabled;
     notifyListeners();
   }
 
@@ -367,6 +375,8 @@ class GameController extends ChangeNotifier {
   }
 
   // ---- Helpers exposed to the painter ----
+  int get comboCount => _comboCount;
+
   double beltOffset(double speed, ConveyorDirection direction) {
     final t = debugPaused ? _debugFreezeTime : _lastFrameTime;
     final raw = t * speed * 0.1;

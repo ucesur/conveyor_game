@@ -7,6 +7,7 @@ extension LevelSystem on GameController {
     if (newLevel <= level) return;
 
     _hapticMedium();
+    GameAudio.instance.play(SoundEffect.levelUp);
     final oldBase = 0.28 + level * 0.035;
     final newBase = 0.28 + newLevel * 0.035;
     level = newLevel;

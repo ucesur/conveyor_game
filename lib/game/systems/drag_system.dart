@@ -19,6 +19,7 @@ extension DragSystem on GameController {
         b.y = pos.dy - b.size / 2;
         b.trail = [];
         _hapticLight();
+        GameAudio.instance.play(SoundEffect.drag);
         _notify();
         return;
       }
@@ -81,6 +82,7 @@ extension DragSystem on GameController {
         if (slot != null) {
           _startThrow(box, targetConv, slot, now);
           _hapticMedium();
+          GameAudio.instance.play(SoundEffect.drop);
           draggedBoxId = null;
           _notify();
           return;
@@ -130,7 +132,7 @@ extension DragSystem on GameController {
       final h    = getCurrentHeight(targetConv, now);
       final slot = _findFreeSlotIndex(box, targetConv, h);
       if (slot == null) { _snapBackToSource(box, now); _hapticHeavy(); }
-      else              { _startThrow(box, targetConv, slot, now); _hapticMedium(); }
+      else              { _startThrow(box, targetConv, slot, now); _hapticMedium(); GameAudio.instance.play(SoundEffect.drop); }
     } else {
       _snapBackToSource(box, now);
       _hapticHeavy();

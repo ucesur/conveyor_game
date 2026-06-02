@@ -99,6 +99,7 @@ extension ComboSystem on GameController {
       toY: isDown ? conv.y : conv.y + convH,
     ));
 
+    GameAudio.instance.play(SoundEffect.bomb);
     _addPopup(cx, popupY, count > 0 ? '💥 +$count' : '💥 BOOM!',
         const Color(0xFFFF6600), size: 28);
   }
@@ -109,6 +110,7 @@ extension ComboSystem on GameController {
     final cx = conv.x + conv.width / 2;
     _spawnIceEffect(cx, gateY);
     HapticFeedback.lightImpact();
+    GameAudio.instance.play(SoundEffect.icy);
     _addPopup(cx, popupY, '❄ FROZEN!', const Color(0xFF7DD3FC), size: 24);
   }
 }

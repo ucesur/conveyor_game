@@ -167,6 +167,7 @@ extension BoxSystem on GameController {
         lives = 0;
         gameState = GameState.gameover;
         if (score > highScore) highScore = score;
+        GameAudio.instance.play(SoundEffect.gameOver);
       }
     }
   }
@@ -235,6 +236,8 @@ extension BoxSystem on GameController {
           _comboCount >= 2 ? '+$mult  x$_comboCount' : '+1',
           const Color(0xFF22C55E),
           size: _comboCount >= 2 ? 26 : 22);
+      GameAudio.instance.play(
+          _comboCount >= 2 ? SoundEffect.combo : SoundEffect.correct);
       _hapticMedium();
       _advanceCombo(box.color, _lastFrameTime);
     } else {
@@ -242,6 +245,7 @@ extension BoxSystem on GameController {
       _comboCount = 0;
       _comboColorId = null;
       _addPopup(conv.x + conv.width / 2, popupY, '✗', const Color(0xFFEF4444));
+      GameAudio.instance.play(SoundEffect.wrong);
       _hapticHeavy();
     }
 

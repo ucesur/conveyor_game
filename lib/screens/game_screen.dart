@@ -4,6 +4,7 @@ import '../game/game_config.dart';
 import '../game/game_controller.dart';
 import '../models/box_color.dart';
 import '../models/game_assets.dart';
+import '../models/game_audio.dart';
 import '../widgets/game_painter.dart';
 
 class GameScreen extends StatefulWidget {
@@ -46,7 +47,10 @@ class _GameScreenState extends State<GameScreen>
 
   Future<void> _loadAssets() async {
     await GameAssets.instance.init();
-    await GameAssets.instance.load();
+    await Future.wait([
+      GameAssets.instance.load(),
+      GameAudio.instance.load(),
+    ]);
     if (!mounted) return;
     setState(() => _ready = true);
     _ticker.start();
@@ -57,6 +61,7 @@ class _GameScreenState extends State<GameScreen>
     _ticker.dispose();
     _game.dispose();
     _fps.dispose();
+    GameAudio.instance.dispose();
     super.dispose();
   }
 

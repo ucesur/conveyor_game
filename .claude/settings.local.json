@@ -16,7 +16,14 @@
       "PowerShell(Get-ChildItem \"E:\\\\Projects\\\\conveyorgame\\\\assets\" -Recurse -File | ForEach-Object { $_.FullName })",
       "Read(//mnt/e/Projects/**)",
       "Bash(flutter run *)",
-      "Bash(powershell *)"
+      "Bash(powershell *)",
+      "Bash(New-Item -ItemType Directory -Force \"E:\\\\Projects\\\\conveyorgame\\\\assets\\\\sounds\")",
+      "Bash(Out-Null)",
+      "Bash(New-Item -ItemType File -Force \"E:\\\\Projects\\\\conveyorgame\\\\assets\\\\sounds\\\\.gitkeep\")",
+      "Bash(Write-Output \"done\")",
+      "PowerShell(java *)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(Remove-Item *)"
     ]
   }
 }
