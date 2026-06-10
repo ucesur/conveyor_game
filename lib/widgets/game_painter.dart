@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../game/game_config.dart';
 import '../game/game_controller.dart';
+import '../models/boss_state.dart';
 import '../models/box.dart';
 import '../models/conveyor.dart';
 import '../models/belt_explosion.dart';
@@ -15,6 +16,7 @@ part 'painters/combo_layer.dart';
 part 'painters/belt_layer.dart';
 part 'painters/box_layer.dart';
 part 'painters/effect_layer.dart';
+part 'painters/boss_layer.dart';
 
 // ---- Per-conveyor geometry cache ----
 class _ConvGeom {
@@ -71,6 +73,7 @@ class GamePainter extends CustomPainter {
     _drawHUD(canvas);
     if (game.comboArea != null) _drawComboArea(canvas, now);
     for (final conv in game.conveyors) { _drawConveyor(canvas, conv, now); }
+    _drawBoss(canvas, now);
     _drawTrail(canvas);
     for (final box in game.boxes) { _drawBox(canvas, box); }
     _drawParticles(canvas, now);

@@ -265,20 +265,26 @@ extension BeltLayer on GamePainter {
       canvas.restore();
     }
 
-    // Gate
-    final gatePerspScale = isDown ? 1.0 : (conv.width - 2 * perspDepth) / conv.width;
-    final gateW    = (conv.width + 6) * gatePerspScale;
-    final gateH    = GameConfig.gateSpriteHeight * gatePerspScale;
-    final gateX    = isDown
-        ? conv.x + conv.width / 2 - gateW / 2
-        : conv.x + conv.width / 2 - xLean - gateW / 2;
-    final scaledGateY = isDown ? gateY : conv.y - GameController.gateOffset - gateH;
-    final gateRect    = Rect.fromLTWH(gateX, scaledGateY, gateW, gateH);
-    final gateImg     = GameAssets.instance.gateImage(conv.color);
-    if (gateImg != null) {
-      _drawSprite(canvas, gateImg, gateRect, opacity: conv.maintenance ? 0.5 : 1.0);
-    } else {
-      _drawProceduralGate(canvas, conv, gateRect);
+    // Gate — skip for boss-conquered belts (boss_layer.dart draws the mouth).
+    final bossState = game.bossState;
+    final isBossGate = bossState != null &&
+        bossState.conqueredConvId == conv.id &&
+        bossState.phase != BossPhase.entering;
+    if (!isBossGate) {
+      final gatePerspScale = isDown ? 1.0 : (conv.width - 2 * perspDepth) / conv.width;
+      final gateW    = (conv.width + 6) * gatePerspScale;
+      final gateH    = GameConfig.gateSpriteHeight * gatePerspScale;
+      final gateX    = isDown
+          ? conv.x + conv.width / 2 - gateW / 2
+          : conv.x + conv.width / 2 - xLean - gateW / 2;
+      final scaledGateY = isDown ? gateY : conv.y - GameController.gateOffset - gateH;
+      final gateRect    = Rect.fromLTWH(gateX, scaledGateY, gateW, gateH);
+      final gateImg     = GameAssets.instance.gateImage(conv.color);
+      if (gateImg != null) {
+        _drawSprite(canvas, gateImg, gateRect, opacity: conv.maintenance ? 0.5 : 1.0);
+      } else {
+        _drawProceduralGate(canvas, conv, gateRect);
+      }
     }
   }
 

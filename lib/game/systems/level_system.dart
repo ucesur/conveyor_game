@@ -3,6 +3,7 @@ part of '../game_controller.dart';
 extension LevelSystem on GameController {
   void _checkLevelUp(double now) {
     if (gameState != GameState.playing) return;
+    if (currentStage.isBoss) return; // Freeze level progression during boss fight.
     final newLevel = levelFromScore(score);
     if (newLevel <= level) return;
 
@@ -21,6 +22,13 @@ extension LevelSystem on GameController {
 
     _addPopup(GameController.gameWidth / 2, GameController.hudBottom + 30,
         'LEVEL $level', const Color(0xFFFBBF24), size: 28);
+
+    // Every 5th level triggers a boss stage (skip if one is already active).
+    if (newLevel % 3 == 0 && currentStage is! BossStage) {
+      final boss = BossStage();
+      currentStage = boss;
+      boss.onActivate(this, newLevel, now);
+    }
   }
 
   void _addBelt(int newCount, double baseSpeed, double now) {

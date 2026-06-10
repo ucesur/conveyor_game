@@ -3,4 +3,5 @@
 enum SpecialType {
   bomb,
   icy,
+  time,
 }

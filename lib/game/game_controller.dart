@@ -13,6 +13,8 @@ import '../models/special_type.dart';
 import 'game_config.dart';
 import 'specials/special_effect.dart';
 import 'stages/game_stage.dart';
+import 'stages/boss_stage.dart';
+import '../models/boss_state.dart';
 import '../models/game_audio.dart';
 
 part 'systems/belt_system.dart';
@@ -132,6 +134,7 @@ class GameController extends ChangeNotifier {
 
   // ---- Stage ----
   GameStage currentStage = const NormalStage();
+  BossState? bossState;
 
   // ---- Deferred mutation queues (safe inside _moveBoxes loop) ----
   final List<Box> _pendingBoxes     = [];
@@ -224,6 +227,8 @@ class GameController extends ChangeNotifier {
     beltExplosions = [];
     draggedBoxId   = null;
     comboArea      = null;
+    bossState      = null;
+    currentStage   = const NormalStage();
     _pauseStart    = 0;
     _shakeUntil    = 0;
     _comboCount    = 0;
@@ -257,6 +262,8 @@ class GameController extends ChangeNotifier {
     popups         = [];
     particles      = [];
     comboArea      = null;
+    bossState      = null;
+    currentStage   = const NormalStage();
     draggedBoxId   = null;
     notifyListeners();
   }
@@ -333,6 +340,8 @@ class GameController extends ChangeNotifier {
     for (final e in beltExplosions)     { e.startTime         += delta; }
     final ct = comboArea?.completionTime;
     if (ct != null) comboArea!.completionTime = ct + delta;
+    final b = bossState;
+    if (b != null) b.phaseStartTime += delta;
   }
 
   void _addPopup(double x, double y, String text, Color color, {double size = 22}) {
@@ -421,6 +430,14 @@ class GameController extends ChangeNotifier {
     }
     return result;
   }
+
+  // ---- Public surface for external stage classes ----
+  void addPopup(double x, double y, String text, Color color, {double size = 22})
+      => _addPopup(x, y, text, color, size: size);
+
+  void spawnExplosion(double x, double y) => _spawnExplosion(x, y);
+
+  void regenerateComboArea() => comboArea = _generateComboArea();
 
   // ---- Haptic helpers ----
   void _hapticLight()  { if (hapticsEnabled) HapticFeedback.lightImpact(); }

@@ -2,11 +2,34 @@ part of '../game_controller.dart';
 
 extension ComboSystem on GameController {
   ComboArea _generateComboArea() {
-    final colors = conveyors.map((c) => c.color).toList();
+    final bossConvId = bossState?.conqueredConvId;
+    final eligible = conveyors
+        .where((c) => c.id != bossConvId)
+        .map((c) => c.color)
+        .toList();
+    final colorPool = eligible.isEmpty
+        ? conveyors.map((c) => c.color).toList()
+        : eligible;
     final recipe = List.generate(
-        GameConfig.comboSlotCount, (_) => colors[_random.nextInt(colors.length)]);
-    final reward = SpecialType.values[_random.nextInt(SpecialType.values.length)];
+        GameConfig.comboSlotCount,
+        (_) => colorPool[_random.nextInt(colorPool.length)]);
+    final reward = currentStage.overrideComboReward() ?? _weightedSpecial();
     return ComboArea(recipe: recipe, reward: reward);
+  }
+
+  SpecialType _weightedSpecial() {
+    const weights = {
+      SpecialType.bomb: GameConfig.specialBombWeight,
+      SpecialType.icy:  GameConfig.specialIcyWeight,
+      SpecialType.time: GameConfig.specialTimeWeight,
+    };
+    final total = weights.values.fold(0.0, (a, b) => a + b);
+    double pick = _random.nextDouble() * total;
+    for (final entry in weights.entries) {
+      pick -= entry.value;
+      if (pick <= 0) return entry.key;
+    }
+    return weights.keys.last;
   }
 
   void _advanceCombo(BoxColor scored, double now) {
@@ -27,6 +50,7 @@ extension ComboSystem on GameController {
     final label = switch (area.reward) {
       SpecialType.bomb => '💣 BOMB INCOMING!',
       SpecialType.icy  => '❄ ICY INCOMING!',
+      SpecialType.time => '⏱ SLOW INCOMING!',
     };
     _addPopup(GameController.gameWidth / 2, GameConfig.comboAreaTop + 26,
         label, const Color(0xFFFF6600), size: 20);
@@ -41,7 +65,10 @@ extension ComboSystem on GameController {
   }
 
   void _spawnSpecialBox(SpecialType type, double now) {
-    final available = conveyors.where((c) => !c.maintenance && !c.frozen).toList();
+    final bossConvId = bossState?.conqueredConvId;
+    final available = conveyors
+        .where((c) => !c.maintenance && !c.frozen && c.id != bossConvId)
+        .toList();
     if (available.isEmpty) return;
     final conv  = available[_random.nextInt(available.length)];
     final convH = getCurrentHeight(conv, now);
@@ -69,6 +96,7 @@ extension ComboSystem on GameController {
     switch (type) {
       case SpecialType.bomb: _triggerBomb(conv, isDown, gateY, popupY);
       case SpecialType.icy:  _triggerIcy(conv, isDown, gateY, popupY);
+      case SpecialType.time: _triggerTime(conv, isDown, gateY, popupY);
     }
   }
 
@@ -102,6 +130,7 @@ extension ComboSystem on GameController {
     GameAudio.instance.play(SoundEffect.bomb);
     _addPopup(cx, popupY, count > 0 ? '💥 +$count' : '💥 BOOM!',
         const Color(0xFFFF6600), size: 28);
+    currentStage.onBombHit(this, conv.id, _lastFrameTime);
   }
 
   void _triggerIcy(Conveyor conv, bool isDown, double gateY, double popupY) {
@@ -112,5 +141,12 @@ extension ComboSystem on GameController {
     HapticFeedback.lightImpact();
     GameAudio.instance.play(SoundEffect.icy);
     _addPopup(cx, popupY, '❄ FROZEN!', const Color(0xFF7DD3FC), size: 24);
+  }
+
+  void _triggerTime(Conveyor conv, bool isDown, double gateY, double popupY) {
+    conv.speed = max(GameConfig.conveyorMinSpeed, conv.speed * GameConfig.timeSlowFactor);
+    final cx = conv.x + conv.width / 2;
+    HapticFeedback.lightImpact();
+    _addPopup(cx, popupY, '⏱ SLOW!', const Color(0xFF60A5FA), size: 24);
   }
 }

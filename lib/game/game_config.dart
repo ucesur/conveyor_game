@@ -62,6 +62,19 @@ class GameConfig {
   static const double spawnIntervalJitterMin = 0.7;
   static const double spawnIntervalJitterMax = 1.3;
 
+  // ── Special box spawn weights ─────────────────────────────────────────────
+  // Relative chance each special type is chosen as the combo reward.
+  // Lower = rarer. Set to 0 to disable a type entirely.
+  static const double specialBombWeight = 1.0;
+  static const double specialIcyWeight  = 1.0;
+  static const double specialTimeWeight = 2.25;
+
+  // ── Time special ─────────────────────────────────────────────────────────
+  // Multiplier applied permanently to the belt speed when a time box scores.
+  static const double timeSlowFactor   = 0.15;
+  // Hard floor — belt speed will never drop below this value.
+  static const double conveyorMinSpeed = 0.3;
+
   // ── Combo balloon ────────────────────────────────────────────────────────
   static const double comboBalloonWidth  = 90.0;  // rx * 2
   static const double comboBalloonHeight = 100.0;  // ry * 2

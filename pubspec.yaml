@@ -68,6 +68,7 @@ flutter:
     - assets/ui/
     - assets/splash/
     - assets/sounds/
+    - assets/boss/
     - svg/
 
   # An image asset can refer to one or more resolution-specific "variants", see

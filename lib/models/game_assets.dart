@@ -23,6 +23,8 @@ class GameAssets {
   ui.Image? _hud;
   ui.Image? _container;
   ui.Image? _bubble;
+  ui.Image? _bossSprite;
+  ui.Image? _bossGate;
   bool _loaded = false;
 
   /// Reserved for future warm-up steps (font registration etc.) so callers
@@ -40,6 +42,8 @@ class GameAssets {
     _hud = await _tryLoad('assets/ui/HUD.png');
     _container = await _tryLoad('assets/ui/container.png');
     _bubble = await _tryLoad('assets/splash/bubble.png');
+    _bossSprite = await _tryLoad('assets/boss/boss.png');
+    _bossGate = await _tryLoad('assets/boss/boss_gate.png');
     for (final color in BoxColor.all) {
       final box = await _tryLoad('assets/boxes/${color.id}.png');
       if (box != null) _boxes[color.id] = box;
@@ -71,6 +75,8 @@ class GameAssets {
   ui.Image? get hudImage => _hud;
   ui.Image? get containerImage => _container;
   ui.Image? get bubbleImage => _bubble;
+  ui.Image? get bossSpriteImage => _bossSprite;
+  ui.Image? get bossGateImage => _bossGate;
   ui.Image? boxImage(BoxColor color) => _boxes[color.id];
   ui.Image? gateImage(BoxColor color) => _gates[color.id];
   ui.Image? conveyorImage(BoxColor color) => _belt;

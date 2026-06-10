@@ -72,8 +72,15 @@ extension BoxSystem on GameController {
   void _spawnBoxes(double now) {
     if (conveyors.isEmpty) return;
     final bs = GameController.boxSize;
+    final bossConvId = bossState?.conqueredConvId;
+    // Exclude the conquered belt's color from the spawn pool during boss stage.
+    final colorPool = bossConvId != null
+        ? conveyors.where((c) => c.id != bossConvId).toList()
+        : conveyors;
+    final effectivePool = colorPool.isEmpty ? conveyors : colorPool;
     for (final conv in conveyors) {
       if (conv.maintenance || conv.frozen) continue;
+      if (conv.id == bossConvId) continue; // Boss owns this gate — bombs only.
       if (now < (_nextSpawnTime[conv.id] ?? 0)) continue;
       final convH = getCurrentHeight(conv, now);
       if (!_isSlotFree(conv, _currentEntrySlot(conv, convH), -1)) continue;
@@ -83,7 +90,7 @@ extension BoxSystem on GameController {
         y: conv.direction == ConveyorDirection.down
             ? conv.y - bs : conv.y + convH,
         conveyorId: conv.id,
-        color: conveyors[_random.nextInt(conveyors.length)].color,
+        color: effectivePool[_random.nextInt(effectivePool.length)].color,
         size: bs,
         onConveyor: true,
         entering: true,
@@ -210,6 +217,26 @@ extension BoxSystem on GameController {
 
     if (box.specialType != null) {
       _triggerSpecial(box.specialType!, conv, isDown, gateY, popupY);
+      fallingBoxes.add(FallingBox(
+        x: box.x,
+        y: isDown ? gateY - box.size : gateY,
+        vy: isDown ? 0.4 : -0.4,
+        size: box.size,
+        color: box.color,
+        startY: isDown ? gateY - box.size : gateY,
+        disappearY: isDown ? gateY + go + gh : gateY - go - gh,
+      ));
+      return 0;
+    }
+
+    // Boss gate: any non-bomb box feeds the boss (heals it); lives are NOT lost.
+    final boss = bossState;
+    if (boss != null &&
+        boss.phase == BossPhase.conquered &&
+        conv.id == boss.conqueredConvId) {
+      boss.health = min(boss.health + 1, boss.maxHealth);
+      _addPopup(conv.x + conv.width / 2, boss.y - 70,
+          '🍖 +HP', const Color(0xFF22C55E), size: 20);
       fallingBoxes.add(FallingBox(
         x: box.x,
         y: isDown ? gateY - box.size : gateY,

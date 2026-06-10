@@ -6,8 +6,11 @@ extension BeltSystem on GameController {
     _lastReverseCheck = now;
     if (conveyors.length <= 1 || _random.nextDouble() >= GameController.reverseChance) return;
 
+    final bossConvId = bossState?.conqueredConvId;
     final candidates = conveyors
-        .where((c) => !c.maintenance && !c.resizing && !c.frozen)
+        .where((c) =>
+            !c.maintenance && !c.resizing && !c.frozen &&
+            c.id != bossConvId)
         .toList();
     if (candidates.isEmpty) return;
 
@@ -92,4 +95,5 @@ extension BeltSystem on GameController {
       }
     }
   }
+
 }

@@ -23,7 +23,8 @@
       "Bash(Write-Output \"done\")",
       "PowerShell(java *)",
       "PowerShell(Get-Command *)",
-      "PowerShell(Remove-Item *)"
+      "PowerShell(Remove-Item *)",
+      "Bash(xargs grep -l \"SpecialEffect\\\\|SpecialRegistry\")"
     ]
   }
 }

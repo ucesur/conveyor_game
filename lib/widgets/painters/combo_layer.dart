@@ -89,6 +89,7 @@ extension ComboLayer on GamePainter {
     final rewardFallback = switch (area.reward) {
       SpecialType.bomb => '💣',
       SpecialType.icy  => '❄',
+      SpecialType.time => '⏱',
     };
     const pad      = 3.0;
     final spriteRect = Rect.fromLTWH(slot3.left + pad, slot3.top + pad,

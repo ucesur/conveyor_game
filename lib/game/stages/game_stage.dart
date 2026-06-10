@@ -1,4 +1,5 @@
 import '../game_controller.dart';
+import '../../models/special_type.dart';
 
 /// Implement to create a new stage type (normal wave, boss, tutorial, etc.).
 /// Attach to the controller via [GameController.currentStage].
@@ -30,6 +31,16 @@ abstract class GameStage {
 
   /// Called when the stage ends (level-up, timeout, or defeat).
   void onEnd(GameController ctrl) {}
+
+  /// Called when this stage becomes active (e.g. boss triggered on level-up).
+  void onActivate(GameController ctrl, int level, double now) {}
+
+  /// Return non-null to force every new combo to use this reward type.
+  /// Null means the default random reward is used.
+  SpecialType? overrideComboReward() => null;
+
+  /// Called whenever a bomb special scores on [conveyorId].
+  void onBombHit(GameController ctrl, int conveyorId, double now) {}
 }
 
 /// The default endless-wave stage — delegates everything to GameController's
