@@ -163,7 +163,7 @@ extension BossLayer on GamePainter {
         (_p..color = const Color(0xFFEF4444).withValues(alpha: opacity)),
       );
     }
-    _drawText(canvas, 'BOSS HP', gateCenterX, barY - 11,
+    _drawText(canvas, AppStrings.bossHp, gateCenterX, barY - 11,
         color: const Color(0xFFFF4444).withValues(alpha: opacity),
         fontSize: 9,
         fontWeight: FontWeight.bold,

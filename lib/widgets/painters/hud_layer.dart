@@ -75,6 +75,24 @@ extension HudLayer on GamePainter {
       if (alive) canvas.drawCircle(Offset(dx, liCY), dotR, _liveStrokePaint);
     }
 
+    // HUD labels: SCORE / LEVEL / LIVES
+    final lH = GameConfig.hudScoreLblH * sy;
+    _drawHudLabel(canvas,
+        AppStrings.scoreLbl,
+        slotCX(GameConfig.hudScoreLblX, GameConfig.hudScoreLblW),
+        slotCY(GameConfig.hudScoreLblY, GameConfig.hudScoreLblH),
+        lH);
+    _drawHudLabel(canvas,
+        AppStrings.levelLbl,
+        slotCX(GameConfig.hudLevelLblX, GameConfig.hudLevelLblW),
+        slotCY(GameConfig.hudLevelLblY, GameConfig.hudLevelLblH),
+        lH);
+    _drawHudLabel(canvas,
+        AppStrings.livesLbl,
+        slotCX(GameConfig.hudLivesLblX, GameConfig.hudLivesLblW),
+        slotCY(GameConfig.hudLivesLblY, GameConfig.hudLivesLblH),
+        lH);
+
     // Progress bar
     final current  = game.pointsForLevel(game.level);
     final next     = game.pointsForLevel(game.level + 1);
@@ -84,5 +102,60 @@ extension HudLayer on GamePainter {
         : min(100.0, ((game.score - current) / ptsNeeded) * 100);
     canvas.drawRect(Rect.fromLTWH(0, hudH, gw, 4), _progressBgPaint);
     canvas.drawRect(Rect.fromLTWH(0, hudH, gw * pct / 100, 4), _progressYellowPaint);
+  }
+
+  /// Draws a HUD label (SCORE / LEVEL / LIVES) with the golden-amber gradient
+  /// and dark-brown stroke that matches the SVG/PNG reference style.
+  void _drawHudLabel(Canvas canvas, String text, double cx, double cy, double height) {
+    final fontSize = height * 0.68;
+    const strokeColor = Color(0xFF3A1A06);
+    const gradientColors = [Color(0xFFE8A040), Color(0xFFB86820), Color(0xFF6B3410)];
+    const gradientStops = [0.0, 0.45, 1.0];
+
+    // Stroke pass — drawn first so the fill sits on top.
+    final strokeSpan = TextSpan(
+      text: text,
+      style: TextStyle(
+        fontSize: fontSize,
+        fontWeight: FontWeight.w900,
+        letterSpacing: 3.0,
+        foreground: Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0
+          ..color = strokeColor,
+      ),
+    );
+    final strokeTp = TextPainter(
+        text: strokeSpan,
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center)
+      ..layout();
+    final ox = cx - strokeTp.width / 2;
+    final oy = cy - strokeTp.height / 2;
+    strokeTp.paint(canvas, Offset(ox, oy));
+
+    // Fill pass — golden-amber → dark-brown top-to-bottom gradient.
+    final gradRect = Rect.fromLTWH(ox, oy, strokeTp.width, strokeTp.height);
+    final fillSpan = TextSpan(
+      text: text,
+      style: TextStyle(
+        fontSize: fontSize,
+        fontWeight: FontWeight.w900,
+        letterSpacing: 3.0,
+        foreground: Paint()
+          ..shader = const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: gradientColors,
+            stops: gradientStops,
+          ).createShader(gradRect),
+      ),
+    );
+    final fillTp = TextPainter(
+        text: fillSpan,
+        textDirection: TextDirection.ltr,
+        textAlign: TextAlign.center)
+      ..layout();
+    fillTp.paint(canvas, Offset(ox, oy));
   }
 }

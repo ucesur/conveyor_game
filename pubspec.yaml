@@ -36,6 +36,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   audioplayers: ^6.0.0
   supabase_flutter: ^2.3.0
+  easy_localization: ^3.0.7
 
 dev_dependencies:
   flutter_test:
@@ -70,6 +71,7 @@ flutter:
     - assets/splash/
     - assets/sounds/
     - assets/boss/
+    - assets/translations/
     - svg/
 
   # An image asset can refer to one or more resolution-specific "variants", see

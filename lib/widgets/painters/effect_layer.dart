@@ -55,7 +55,7 @@ extension EffectLayer on GamePainter {
         baselineCenter: true);
 
     // Label
-    _drawText(canvas, 'COMBO', cx, cy + 14,
+    _drawText(canvas, AppStrings.combo, cx, cy + 14,
         color: color,
         fontSize: 9,
         fontWeight: FontWeight.bold,

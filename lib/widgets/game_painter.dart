@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import '../game/game_config.dart';
 import '../game/game_controller.dart';
+import '../l10n/app_strings.dart';
 import '../models/boss_state.dart';
 import '../models/box.dart';
 import '../models/conveyor.dart';

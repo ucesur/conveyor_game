@@ -1,7 +1,9 @@
-﻿import 'package:flutter/material.dart';
+﻿import 'package:easy_localization/easy_localization.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import '../game/game_config.dart';
 import '../game/game_controller.dart';
+import '../l10n/app_strings.dart';
 import '../models/box_color.dart';
 import '../models/game_assets.dart';
 import '../models/game_audio.dart';
@@ -115,6 +117,7 @@ class _GameScreenState extends State<GameScreen>
           // Inform the controller of the actual screen dimensions so conveyor
           // heights and game-space coordinates scale correctly.
           GameController.setGameSize(size.width, size.height);
+          AppStrings.update(context);
           // Scale from game-coord (360-wide) to widget pixels so HUD-aligned
           // widgets like the pause button follow the painter across screen
           // sizes instead of drifting into the LIVES cluster on wider layouts.
@@ -458,21 +461,21 @@ class _PausedOverlay extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Text('PAUSED',
-              style: TextStyle(
+          Text(context.tr('paused'),
+              style: const TextStyle(
                   color: Color(0xFFFBBF24),
                   fontSize: 40,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 4)),
           const SizedBox(height: 32),
-          _YellowButton(label: 'RESUME', onPressed: onResume),
+          _YellowButton(label: context.tr('resume'), onPressed: onResume),
           const SizedBox(height: 16),
           GestureDetector(
             onTap: onSettings,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Text('SETTINGS',
-                  style: TextStyle(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Text(context.tr('settings'),
+                  style: const TextStyle(
                       color: Color(0xFF94A3B8),
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -481,10 +484,10 @@ class _PausedOverlay extends StatelessWidget {
           ),
           GestureDetector(
             onTap: onMenu,
-            child: const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Text('MENU',
-                  style: TextStyle(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Text(context.tr('menu'),
+                  style: const TextStyle(
                       color: Color(0xFFCBD5E1),
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
@@ -533,22 +536,22 @@ class _MenuOverlayState extends State<_MenuOverlay> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Text('CONVEYOR',
-                    style: TextStyle(
+                Text(context.tr('conveyor'),
+                    style: const TextStyle(
                         color: Color(0xFFFBBF24),
                         fontSize: 38,
                         fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
-                const Text('MATCH',
-                    style: TextStyle(
+                Text(context.tr('match'),
+                    style: const TextStyle(
                         color: Color(0xFFFBBF24),
                         fontSize: 38,
                         fontWeight: FontWeight.bold)),
                 const SizedBox(height: 16),
-                const Text(
-                  'Drag boxes to a NEIGHBOR\nconveyor of the matching color.\nBoxes can only hop one lane!',
+                Text(
+                  context.tr('instructions'),
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                       color: Color(0xFFCBD5E1), fontSize: 14, height: 1.5),
                 ),
                 const SizedBox(height: 16),
@@ -581,13 +584,13 @@ class _MenuOverlayState extends State<_MenuOverlay> {
                 if (widget.highScore > 0)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 12),
-                    child: Text('Best: ${widget.highScore}',
+                    child: Text('${context.tr('best')}: ${widget.highScore}',
                         style: const TextStyle(
                             color: Color(0xFFFBBF24),
                             fontSize: 14,
                             fontWeight: FontWeight.bold)),
                   ),
-                _YellowButton(label: 'START', onPressed: widget.onStart),
+                _YellowButton(label: context.tr('start'), onPressed: widget.onStart),
                 const SizedBox(height: 24),
                 _buildLeaderboard(),
                 const SizedBox(height: 8),
@@ -623,21 +626,21 @@ class _MenuOverlayState extends State<_MenuOverlay> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Row(
+        Row(
           children: [
-            Expanded(child: Divider(color: Color(0xFF334155))),
+            const Expanded(child: Divider(color: Color(0xFF334155))),
             Padding(
-              padding: EdgeInsets.symmetric(horizontal: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Text(
-                'HIGH SCORES',
-                style: TextStyle(
+                context.tr('high_scores'),
+                style: const TextStyle(
                     color: Color(0xFF94A3B8),
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
                     letterSpacing: 2),
               ),
             ),
-            Expanded(child: Divider(color: Color(0xFF334155))),
+            const Expanded(child: Divider(color: Color(0xFF334155))),
           ],
         ),
         const SizedBox(height: 10),
@@ -654,10 +657,10 @@ class _MenuOverlayState extends State<_MenuOverlay> {
             ),
           )
         else if (_leaders!.isEmpty)
-          const Text(
-            'No scores yet — be the first!',
+          Text(
+            context.tr('no_scores_yet_first'),
             textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFF475569), fontSize: 12),
+            style: const TextStyle(color: Color(0xFF475569), fontSize: 12),
           )
         else
           for (int i = 0; i < _leaders!.length; i++)
@@ -710,22 +713,22 @@ class _GameOverOverlayState extends State<_GameOverOverlay> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             const SizedBox(height: 8),
-            const Text('GAME OVER',
-                style: TextStyle(
+            Text(context.tr('game_over'),
+                style: const TextStyle(
                     color: Color(0xFFF87171),
                     fontSize: 30,
                     fontWeight: FontWeight.bold)),
             const SizedBox(height: 20),
-            const Text('SCORE',
-                style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
+            Text(context.tr('score'),
+                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
             Text('${widget.score}',
                 style: const TextStyle(
                     color: Color(0xFFFBBF24),
                     fontSize: 48,
                     fontWeight: FontWeight.bold)),
             const SizedBox(height: 6),
-            const Text('LEVEL REACHED',
-                style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
+            Text(context.tr('level_reached'),
+                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
             Text('${widget.level}',
                 style: const TextStyle(
                     color: Colors.white,
@@ -733,15 +736,15 @@ class _GameOverOverlayState extends State<_GameOverOverlay> {
                     fontWeight: FontWeight.bold)),
             const SizedBox(height: 12),
             if (newHigh)
-              const Padding(
-                padding: EdgeInsets.only(bottom: 10),
-                child: Text('🏆 New High Score!',
-                    style: TextStyle(
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(context.tr('new_high_score'),
+                    style: const TextStyle(
                         color: Color(0xFFFBBF24),
                         fontSize: 16,
                         fontWeight: FontWeight.bold)),
               ),
-            _YellowButton(label: 'PLAY AGAIN', onPressed: widget.onRestart),
+            _YellowButton(label: context.tr('play_again'), onPressed: widget.onRestart),
             const SizedBox(height: 20),
             _buildLeaderboard(),
             const SizedBox(height: 8),
@@ -755,10 +758,10 @@ class _GameOverOverlayState extends State<_GameOverOverlay> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'TOP SCORES',
+        Text(
+          context.tr('top_scores'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
               color: Color(0xFF94A3B8),
               fontSize: 11,
               fontWeight: FontWeight.bold,
@@ -775,9 +778,9 @@ class _GameOverOverlayState extends State<_GameOverOverlay> {
             ),
           )
         else if (_leaders!.isEmpty)
-          const Text('No scores yet',
+          Text(context.tr('no_scores_yet'),
               textAlign: TextAlign.center,
-              style: TextStyle(color: Color(0xFF475569), fontSize: 12))
+              style: const TextStyle(color: Color(0xFF475569), fontSize: 12))
         else
           for (int i = 0; i < _leaders!.length; i++)
             _LeaderRow(rank: i + 1, entry: _leaders![i], myScore: widget.score),
@@ -832,7 +835,7 @@ class _LeaderRow extends StatelessWidget {
                     fontSize: 14,
                     fontWeight: FontWeight.bold)),
           ),
-          Text('Lv.${entry.level}',
+          Text('${context.tr('lv')}${entry.level}',
               style:
                   const TextStyle(color: Color(0xFF94A3B8), fontSize: 11)),
         ],
@@ -863,19 +866,18 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'SETTINGS',
+          Text(
+            context.tr('settings'),
             textAlign: TextAlign.center,
-            style: TextStyle(
+            style: const TextStyle(
                 color: Color(0xFFFBBF24),
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 3),
           ),
           const SizedBox(height: 36),
-          // Haptics toggle
           _SettingsRow(
-            label: 'Haptics',
+            label: context.tr('haptics'),
             icon: widget.game.hapticsEnabled
                 ? Icons.vibration
                 : Icons.phone_android,
@@ -886,20 +888,21 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
             },
           ),
           const SizedBox(height: 16),
-          // High score reset
-          _buildResetRow(),
+          _buildLanguageRow(context),
+          const SizedBox(height: 16),
+          _buildResetRow(context),
           const SizedBox(height: 40),
           GestureDetector(
             onTap: () {
               setState(() => _confirmReset = false);
               widget.onClose();
             },
-            child: const Padding(
-              padding: EdgeInsets.symmetric(vertical: 10),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
               child: Text(
-                'BACK',
+                context.tr('back'),
                 textAlign: TextAlign.center,
-                style: TextStyle(
+                style: const TextStyle(
                     color: Color(0xFFCBD5E1),
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
@@ -912,7 +915,65 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
     );
   }
 
-  Widget _buildResetRow() {
+  Widget _buildLanguageRow(BuildContext context) {
+    const locales = [
+      Locale('en'), Locale('tr'), Locale('es'), Locale('fr'), Locale('de'),
+    ];
+    const flags = ['🇬🇧', '🇹🇷', '🇪🇸', '🇫🇷', '🇩🇪'];
+    const codes = ['EN', 'TR', 'ES', 'FR', 'DE'];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF334155)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(context.tr('language'),
+              style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 15)),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: List.generate(locales.length, (i) {
+              final selected = context.locale == locales[i];
+              return GestureDetector(
+                onTap: () => context.setLocale(locales[i]),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? const Color(0xFFFBBF24).withValues(alpha: 0.15)
+                        : const Color(0xFF0F172A),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: selected
+                          ? const Color(0xFFFBBF24)
+                          : const Color(0xFF475569),
+                    ),
+                  ),
+                  child: Text('${flags[i]} ${codes[i]}',
+                      style: TextStyle(
+                        color: selected
+                            ? const Color(0xFFFBBF24)
+                            : const Color(0xFF94A3B8),
+                        fontWeight:
+                            selected ? FontWeight.bold : FontWeight.normal,
+                        fontSize: 12,
+                      )),
+                ),
+              );
+            }),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildResetRow(BuildContext context) {
     if (widget.game.highScore == 0) {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
@@ -921,10 +982,10 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: const Color(0xFF334155)),
         ),
-        child: const Text(
-          'No high score yet',
+        child: Text(
+          context.tr('no_high_score_yet'),
           textAlign: TextAlign.center,
-          style: TextStyle(color: Color(0xFF475569), fontSize: 14),
+          style: const TextStyle(color: Color(0xFF475569), fontSize: 14),
         ),
       );
     }
@@ -943,9 +1004,8 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('High Score',
-                  style:
-                      TextStyle(color: Color(0xFFCBD5E1), fontSize: 15)),
+              Text(context.tr('high_score'),
+                  style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 15)),
               Row(
                 children: [
                   Text(
@@ -956,8 +1016,8 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
                         fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(width: 12),
-                  const Text('RESET',
-                      style: TextStyle(
+                  Text(context.tr('reset'),
+                      style: const TextStyle(
                           color: Color(0xFFEF4444),
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
@@ -970,7 +1030,6 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
       );
     }
 
-    // Confirmation
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
       decoration: BoxDecoration(
@@ -981,10 +1040,10 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text(
-            'Reset high score?',
+          Text(
+            context.tr('reset_confirm'),
             textAlign: TextAlign.center,
-            style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 14),
+            style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 14),
           ),
           const SizedBox(height: 12),
           Row(
@@ -998,15 +1057,13 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     decoration: BoxDecoration(
-                      color:
-                          const Color(0xFFEF4444).withValues(alpha: 0.2),
+                      color: const Color(0xFFEF4444).withValues(alpha: 0.2),
                       borderRadius: BorderRadius.circular(6),
-                      border:
-                          Border.all(color: const Color(0xFFEF4444)),
+                      border: Border.all(color: const Color(0xFFEF4444)),
                     ),
-                    child: const Text('YES',
+                    child: Text(context.tr('yes'),
                         textAlign: TextAlign.center,
-                        style: TextStyle(
+                        style: const TextStyle(
                             color: Color(0xFFEF4444),
                             fontWeight: FontWeight.bold,
                             fontSize: 13)),
@@ -1022,12 +1079,11 @@ class _SettingsOverlayState extends State<_SettingsOverlay> {
                     decoration: BoxDecoration(
                       color: const Color(0xFF0F172A),
                       borderRadius: BorderRadius.circular(6),
-                      border:
-                          Border.all(color: const Color(0xFF475569)),
+                      border: Border.all(color: const Color(0xFF475569)),
                     ),
-                    child: const Text('NO',
+                    child: Text(context.tr('no'),
                         textAlign: TextAlign.center,
-                        style: TextStyle(
+                        style: const TextStyle(
                             color: Color(0xFFCBD5E1),
                             fontWeight: FontWeight.bold,
                             fontSize: 13)),

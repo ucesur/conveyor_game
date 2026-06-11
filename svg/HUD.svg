@@ -1,12 +1,72 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 195" width="100%" height="100%">
-  <image href="HUD.png" x="0" y="0" width="800" height="195" />
+  <defs>
+    <!-- Golden-amber to dark-brown gradient matching the wood tone in the HUD -->
+    <linearGradient id="labelGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#E8A040"/>
+      <stop offset="45%"  stop-color="#B86820"/>
+      <stop offset="100%" stop-color="#6B3410"/>
+    </linearGradient>
+
+    <!-- Subtle inner-shadow filter for the carved/embossed depth -->
+    <filter id="labelShadow" x="-10%" y="-20%" width="120%" height="150%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1"
+                    flood-color="#2A1008" flood-opacity="0.85"/>
+    </filter>
+  </defs>
+
+  <image href="HUD.png" x="0" y="0" width="800" height="195"/>
+
+  <!-- SCORE label -->
+  <svg id="score_text" x="14" y="92" width="216" height="50">
+    <text x="108" y="36"
+          text-anchor="middle"
+          dominant-baseline="auto"
+          font-family="Impact, 'Arial Black', Arial, sans-serif"
+          font-size="30"
+          font-weight="900"
+          letter-spacing="4"
+          fill="url(#labelGrad)"
+          stroke="#3A1A06"
+          stroke-width="0.6"
+          filter="url(#labelShadow)">SCORE</text>
+  </svg>
 
   <svg id="score" x="14" y="132" width="216" height="50">
-    </svg>
+  </svg>
+
+  <!-- LEVEL label -->
+  <svg id="level_text" x="324" y="92" width="156" height="50">
+    <text x="78" y="36"
+          text-anchor="middle"
+          dominant-baseline="auto"
+          font-family="Impact, 'Arial Black', Arial, sans-serif"
+          font-size="30"
+          font-weight="900"
+          letter-spacing="4"
+          fill="url(#labelGrad)"
+          stroke="#3A1A06"
+          stroke-width="0.6"
+          filter="url(#labelShadow)">LEVEL</text>
+  </svg>
 
   <svg id="level" x="322" y="132" width="156" height="50">
-    </svg>
+  </svg>
+
+  <!-- LIVES label -->
+  <svg id="live_text" x="570" y="92" width="172" height="50">
+    <text x="86" y="36"
+          text-anchor="middle"
+          dominant-baseline="auto"
+          font-family="Impact, 'Arial Black', Arial, sans-serif"
+          font-size="30"
+          font-weight="900"
+          letter-spacing="4"
+          fill="url(#labelGrad)"
+          stroke="#3A1A06"
+          stroke-width="0.6"
+          filter="url(#labelShadow)">LIVES</text>
+  </svg>
 
   <svg id="lives" x="570" y="132" width="172" height="50">
-    </svg>
+  </svg>
 </svg>

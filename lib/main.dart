@@ -1,20 +1,36 @@
+import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'screens/game_screen.dart';
 import 'services/app_config.dart';
-import 'services/score_repository.dart';
 import 'services/score_service.dart';
 import 'services/supabase_score_repository.dart';
 
+const _supportedLocales = [
+  Locale('en'),
+  Locale('tr'),
+  Locale('es'),
+  Locale('fr'),
+  Locale('de'),
+];
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await EasyLocalization.ensureInitialized();
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
   await _initScoreService();
-  runApp(const ConveyorMatchApp());
+  runApp(
+    EasyLocalization(
+      supportedLocales: _supportedLocales,
+      path: 'assets/translations',
+      fallbackLocale: const Locale('en'),
+      child: const ConveyorMatchApp(),
+    ),
+  );
 }
 
 Future<void> _initScoreService() async {
@@ -29,25 +45,9 @@ Future<void> _initScoreService() async {
     ).timeout(const Duration(seconds: 10));
     final repo = SupabaseScoreRepository(Supabase.instance.client);
     ScoreService.instance.configure(repo);
-    debugPrint('[ScoreService] Client created. Running diagnostics…');
-    await _runDiagnostics(repo);
+    debugPrint('[ScoreService] Ready.');
   } catch (e) {
     debugPrint('[ScoreService] Init error: $e');
-  }
-}
-
-Future<void> _runDiagnostics(SupabaseScoreRepository repo) async {
-  try {
-    final rows = await repo.getTopScores(limit: 1);
-    debugPrint('[ScoreService] SELECT ok — ${rows.length} row(s).');
-  } catch (e) {
-    debugPrint('[ScoreService] SELECT failed: $e');
-  }
-  try {
-    await repo.submitScore(const ScoreEntry(score: 0, level: 0));
-    debugPrint('[ScoreService] INSERT ok — test row written.');
-  } catch (e) {
-    debugPrint('[ScoreService] INSERT failed: $e');
   }
 }
 
@@ -59,6 +59,9 @@ class ConveyorMatchApp extends StatelessWidget {
     return MaterialApp(
       title: 'Conveyor Match',
       debugShowCheckedModeBanner: false,
+      localizationsDelegates: context.localizationDelegates,
+      supportedLocales: context.supportedLocales,
+      locale: context.locale,
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF0F172A),

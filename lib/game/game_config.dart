@@ -19,6 +19,10 @@ class GameConfig {
   static const double hudScoreX = 14.0,  hudScoreY = 132.0, hudScoreW = 216.0, hudScoreH = 50.0;
   static const double hudLevelX = 322.0, hudLevelY = 132.0, hudLevelW = 156.0, hudLevelH = 50.0;
   static const double hudLivesX = 570.0, hudLivesY = 132.0, hudLivesW = 172.0, hudLivesH = 50.0;
+  // Label text slots (SCORE / LEVEL / LIVES) — from svg/HUD.svg id="score_text" etc.
+  static const double hudScoreLblX = 14.0,  hudScoreLblY = 92.0, hudScoreLblW = 216.0, hudScoreLblH = 50.0;
+  static const double hudLevelLblX = 324.0, hudLevelLblY = 92.0, hudLevelLblW = 156.0, hudLevelLblH = 50.0;
+  static const double hudLivesLblX = 570.0, hudLivesLblY = 92.0, hudLivesLblW = 172.0, hudLivesLblH = 50.0;
 
   // ── Box ──────────────────────────────────────────────────────────────────
   static const double boxSize = 40.0;
