@@ -9,14 +9,22 @@ extension BossLayer on GamePainter {
     final boss = game.bossState;
     if (boss == null) return;
 
-    _drawBossBody(canvas, boss, now);
+    // Hide boss sprite once it has taken over the gate.
+    if (boss.phase == BossPhase.entering || boss.phase == BossPhase.conquering) {
+      _drawBossBody(canvas, boss, now);
+    }
 
     // Draw the conquered-gate mouth once the boss has arrived.
     if (boss.phase != BossPhase.entering) {
       final conv = game.conveyors
           .where((c) => c.id == boss.conqueredConvId)
           .firstOrNull;
-      if (conv != null) _drawBossGate(canvas, conv, boss, now);
+      if (conv != null) {
+        _drawBossGate(canvas, conv, boss, now);
+        if (boss.phase == BossPhase.conquered || boss.phase == BossPhase.dying) {
+          _drawBossHealthBarAboveGate(canvas, conv, boss, now);
+        }
+      }
     }
   }
 
@@ -49,10 +57,6 @@ extension BossLayer on GamePainter {
       _drawProceduralBossBody(canvas, boss, rect, now, opacity);
     }
 
-    // Health bar is only meaningful once the boss has been conquered.
-    if (boss.phase == BossPhase.conquered || boss.phase == BossPhase.dying) {
-      _drawBossHealthBar(canvas, boss, opacity);
-    }
   }
 
   void _drawProceduralBossBody(
@@ -116,22 +120,38 @@ extension BossLayer on GamePainter {
     }
   }
 
-  // ── Boss health bar ────────────────────────────────────────────────────────
+  // ── Boss health bar (drawn above the boss gate) ───────────────────────────
 
-  void _drawBossHealthBar(Canvas canvas, BossState boss, double opacity) {
+  void _drawBossHealthBarAboveGate(
+      Canvas canvas, Conveyor conv, BossState boss, double now) {
+    double opacity;
+    if (boss.phase == BossPhase.dying) {
+      opacity = 1.0 - ((now - boss.phaseStartTime) / 1200.0).clamp(0.0, 1.0);
+    } else {
+      opacity = 1.0;
+    }
+
+    // Recompute gate top so the bar sits just above it.
+    final layoutCenterX = GameController.gameWidth / 2;
+    final xLean = (conv.x + conv.width / 2 - layoutCenterX) *
+        GameConfig.conveyorPerspectiveXFactor;
+    final perspDepth = GameConfig.perspDepth;
+    final gatePerspScale = (conv.width * 1.6 - perspDepth) / conv.width;
+    final gateH = GameConfig.gateSpriteHeight * gatePerspScale;
+    final gateCenterX = conv.x + conv.width / 2 - xLean;
+    final gateTop = conv.y - GameController.gateOffset - gateH;
+
     const barW = 70.0;
     const barH = 7.0;
     const pad  = 1.5;
-    final barX = boss.x - barW / 2;
-    final barY = boss.y - _bossH - 14;
+    final barX = gateCenterX - barW / 2;
+    final barY = gateTop - barH - 12;
 
-    // Background track.
     canvas.drawRRect(
       RRect.fromRectAndRadius(Rect.fromLTWH(barX, barY, barW, barH),
           const Radius.circular(3)),
       (_p..color = const Color(0xFF1E293B).withValues(alpha: opacity)),
     );
-    // HP fill.
     final fill = (boss.health / boss.maxHealth).clamp(0.0, 1.0);
     if (fill > 0) {
       canvas.drawRRect(
@@ -143,7 +163,7 @@ extension BossLayer on GamePainter {
         (_p..color = const Color(0xFFEF4444).withValues(alpha: opacity)),
       );
     }
-    _drawText(canvas, 'BOSS HP', boss.x, barY - 11,
+    _drawText(canvas, 'BOSS HP', gateCenterX, barY - 11,
         color: const Color(0xFFFF4444).withValues(alpha: opacity),
         fontSize: 9,
         fontWeight: FontWeight.bold,
@@ -159,7 +179,7 @@ extension BossLayer on GamePainter {
         GameConfig.conveyorPerspectiveXFactor;
 
     // UP belt: gate sprite at the top of the belt.
-    final gatePerspScale = (conv.width - 2 * perspDepth) / conv.width;
+    final gatePerspScale = (conv.width * 1.6 - perspDepth) / conv.width;
     final gateW = (conv.width + 6) * gatePerspScale;
     final gateH = GameConfig.gateSpriteHeight * gatePerspScale;
     final gateX = conv.x + conv.width / 2 - xLean - gateW / 2;

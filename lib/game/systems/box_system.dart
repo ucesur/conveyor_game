@@ -170,6 +170,7 @@ extension BoxSystem on GameController {
 
     if (wrongHits > 0) {
       _shakeUntil = _lastFrameTime + 280;
+      lives -= 1;
       if (lives <= 0) {
         lives = 0;
         gameState = GameState.gameover;

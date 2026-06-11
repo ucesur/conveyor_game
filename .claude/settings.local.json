@@ -24,7 +24,10 @@
       "PowerShell(java *)",
       "PowerShell(Get-Command *)",
       "PowerShell(Remove-Item *)",
-      "Bash(xargs grep -l \"SpecialEffect\\\\|SpecialRegistry\")"
+      "Bash(xargs grep -l \"SpecialEffect\\\\|SpecialRegistry\")",
+      "PowerShell(flutter analyze *)",
+      "PowerShell(if \\(!\\(Test-Path \"E:\\\\Projects\\\\conveyorgame\\\\.vscode\"\\)\\) { New-Item -ItemType Directory -Path \"E:\\\\Projects\\\\conveyorgame\\\\.vscode\" }; \"done\")",
+      "PowerShell(New-Item *)"
     ]
   }
 }

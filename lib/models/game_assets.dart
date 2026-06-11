@@ -42,7 +42,7 @@ class GameAssets {
     _hud = await _tryLoad('assets/ui/HUD.png');
     _container = await _tryLoad('assets/ui/container.png');
     _bubble = await _tryLoad('assets/splash/bubble.png');
-    _bossSprite = await _tryLoad('assets/boss/boss.png');
+    _bossSprite = await _tryLoad('assets/boss/boss_gate.png');
     _bossGate = await _tryLoad('assets/boss/boss_gate.png');
     for (final color in BoxColor.all) {
       final box = await _tryLoad('assets/boxes/${color.id}.png');
